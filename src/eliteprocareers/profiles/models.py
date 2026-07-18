@@ -11,7 +11,7 @@ from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field 
 
 
 class ProficiencyLevel(str, Enum):
@@ -150,3 +150,16 @@ class FullProfile(BaseModel):
     projects: list[Project] = []
     achievements: list[Achievement] = []
     references: list[Reference] = []
+class CVTrack(BaseModel):
+    """A named CV strategy track (e.g. 'Product Management' vs 'Supply Chain').
+
+    Pure configuration — target roles and scoring weights. Generated CVs,
+    cover letters, and match scores live elsewhere and reference this by id.
+    """
+    id: UUID | None = None
+    user_id: UUID
+    track_name: str
+    target_roles: list[str] = Field(default_factory=list)
+    scoring_weights: dict[str, float] = Field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
