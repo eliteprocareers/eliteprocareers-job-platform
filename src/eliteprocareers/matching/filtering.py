@@ -76,6 +76,47 @@ def check_employment_type(track: CVTrack, job: Job) -> CriterionResult:
     )
 
 
+def check_seniority(track: CVTrack, job: Job) -> CriterionResult:
+    """Exact match against job.attributes['seniority_level'] (e.g.
+    'entry', 'mid', 'senior', 'lead', 'executive') vs
+    track.seniority_levels. Same shape as check_employment_type --
+    closed vocabulary, connector-populated, no normalization layer
+    needed.
+
+    NOTE: as of migration 0003, no connector populates
+    attributes['seniority_level'] yet -- this criterion will SKIP on
+    all current real data until a connector is updated to extract it.
+    """
+    if not track.seniority_levels:
+        return CriterionResult(
+            criterion="seniority",
+            outcome=FilterOutcome.SKIP,
+            detail="no seniority_levels set on this track",
+        )
+
+    job_seniority = job.attributes.get("seniority_level")
+
+    if not job_seniority:
+        return CriterionResult(
+            criterion="seniority",
+            outcome=FilterOutcome.SKIP,
+            detail="job has no seniority_level attribute (connector doesn't populate it yet)",
+        )
+
+    if job_seniority in track.seniority_levels:
+        return CriterionResult(
+            criterion="seniority",
+            outcome=FilterOutcome.PASS,
+            detail=f"{job_seniority} is in seniority_levels",
+        )
+
+    return CriterionResult(
+        criterion="seniority",
+        outcome=FilterOutcome.FAIL,
+        detail=f"{job_seniority} is not in seniority_levels {track.seniority_levels}",
+    )
+
+
 def check_location(track: CVTrack, job: Job) -> CriterionResult:
     """Country-level check only for now (state/city precision can be
     added later if real data shows it's needed). willing_to_relocate is
