@@ -161,6 +161,24 @@ class CVTrack(BaseModel):
     track_name: str
     target_roles: list[str] = Field(default_factory=list)
     scoring_weights: dict[str, float] = Field(default_factory=dict)
+
+    # Structured filter preferences (migration 0003). Each field drives
+    # a specific Stage-1 filter -- see matching/filtering.py. Empty
+    # list / None means "no preference", not "excludes everything" --
+    # the filtering engine must treat unset preferences as non-restrictive.
+    preferred_locations: list[str] = Field(default_factory=list)
+    preferred_countries: list[str] = Field(default_factory=list)
+    employment_types: list[str] = Field(default_factory=list)
+    seniority_levels: list[str] = Field(default_factory=list)
+    industries: list[str] = Field(default_factory=list)
+    work_mode: list[str] = Field(default_factory=list)
+    willing_to_relocate: bool = False
+    visa_sponsorship_required: bool | None = None
+    work_authorization_status: str | None = None
+    salary_expectation_min: float | None = None
+    salary_expectation_max: float | None = None
+    salary_currency: str | None = None
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 class DocType(str, Enum):
