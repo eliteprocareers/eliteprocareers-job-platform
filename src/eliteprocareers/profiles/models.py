@@ -163,3 +163,53 @@ class CVTrack(BaseModel):
     scoring_weights: dict[str, float] = Field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+class DocType(str, Enum):
+    cv = "cv"
+    cover_letter = "cover_letter"
+    screening_answer = "screening_answer"
+
+
+class GeneratedDocument(BaseModel):
+    """Maps directly to the generated_documents table.
+
+    content is always a plain string in the DB. For doc_type='cv', that
+    string is JSON produced by CVContent.to_json() — parse it back with
+    CVContent.from_json(doc.content). For cover_letter/screening_answer,
+    content is just the plain generated text.
+    """
+    id: UUID | None = None
+    user_id: UUID
+    cv_track_id: UUID
+    application_id: UUID | None = None
+    doc_type: DocType
+    content: str
+    version: int = 1
+    ai_model_used: str | None = None
+    created_at: datetime | None = None
+
+
+class CVWorkExperienceEntry(BaseModel):
+    title: str
+    company: str
+    dates: str
+    bullets: list[str] = Field(default_factory=list)
+
+
+class CVContent(BaseModel):
+    """Structured representation of a tailored CV, before it's serialized
+    into GeneratedDocument.content as JSON. Kept separate from
+    GeneratedDocument because the DB column is just text — this model
+    defines what that text means when doc_type='cv'.
+    """
+    summary: str
+    skills: list[str] = Field(default_factory=list)
+    work_experience: list[CVWorkExperienceEntry] = Field(default_factory=list)
+    education: list[str] = Field(default_factory=list)
+    certifications: list[str] = Field(default_factory=list)
+
+    def to_json(self) -> str:
+        return self.model_dump_json()
+
+    @classmethod
+    def from_json(cls, raw: str) -> "CVContent":
+        return cls.model_validate_json(raw)
