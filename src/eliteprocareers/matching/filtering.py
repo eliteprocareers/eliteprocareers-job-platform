@@ -412,3 +412,40 @@ def check_location(track: CVTrack, job: Job) -> CriterionResult:
         outcome=FilterOutcome.FAIL,
         detail=f"{normalized.country} is not in preferred_countries {track.preferred_countries}",
     )
+
+
+def run_stage1_filters(
+    track: CVTrack, job: Job, profile: CandidateProfile
+) -> list[CriterionResult]:
+    """Runs every Stage-1 criterion against one (track, job) pair and
+    returns all 8 results together, in a fixed order. This is the
+    single place that knows every criterion exists and how to call
+    it -- callers (e.g. the ingestion/matching pipeline) shouldn't
+    need to import each check_* function individually.
+
+    check_relocation is the only criterion needing `profile` (the
+    candidate's own home location, not just track preferences) --
+    every other criterion only needs track + job.
+    """
+    return [
+        check_employment_type(track, job),
+        check_seniority(track, job),
+        check_industry(track, job),
+        check_work_mode(track, job),
+        check_relocation(track, job, profile),
+        check_visa_sponsorship(track, job),
+        check_salary(track, job),
+        check_location(track, job),
+    ]
+
+
+def passes_stage1(results: list[CriterionResult]) -> bool:
+    """The actual Stage-1 gate: a job passes iff no criterion FAILed.
+
+    SKIP is neutral by design (every criterion above already treats
+    unset preferences / unresolvable job data as SKIP, never FAIL) --
+    a job with all 8 criteria SKIPping still passes here, since
+    nothing was actually determined to be a mismatch. Only a genuine,
+    resolved FAIL blocks a job from Stage-2 scoring.
+    """
+    return not any(r.outcome == FilterOutcome.FAIL for r in results)
