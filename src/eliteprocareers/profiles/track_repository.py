@@ -28,15 +28,19 @@ class TrackRepository:
             "target_roles": target_roles or [],
             "scoring_weights": scoring_weights or {},
         }
-        row = self.db.insert(self.TABLE, payload)
-        return CVTrack.model_validate(row)
+        rows = self.db.insert(self.TABLE, payload)
+        return CVTrack.model_validate(rows[0])
 
     def list_tracks(self, user_id: UUID) -> list[CVTrack]:
-        rows = self.db.select(self.TABLE, filters={"user_id": f"eq.{user_id}"})
+        rows = self.db.select(
+            self.TABLE, params={"select": "*", "user_id": f"eq.{user_id}"}
+        )
         return [CVTrack.model_validate(r) for r in rows]
 
     def get_track(self, track_id: UUID) -> CVTrack | None:
-        rows = self.db.select(self.TABLE, filters={"id": f"eq.{track_id}"})
+        rows = self.db.select(
+            self.TABLE, params={"select": "*", "id": f"eq.{track_id}"}
+        )
         if not rows:
             return None
         return CVTrack.model_validate(rows[0])
@@ -44,9 +48,9 @@ class TrackRepository:
     def update_scoring_weights(
         self, track_id: UUID, scoring_weights: dict[str, float]
     ) -> CVTrack:
-        row = self.db.update(
+        rows = self.db.update(
             self.TABLE,
-            filters={"id": f"eq.{track_id}"},
             data={"scoring_weights": scoring_weights},
+            params={"id": f"eq.{track_id}"},
         )
-        return CVTrack.model_validate(row)
+        return CVTrack.model_validate(rows[0])
