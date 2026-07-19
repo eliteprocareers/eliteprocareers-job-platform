@@ -70,7 +70,7 @@ def compute_match_score(
     profile: FullProfile,
     track: CVTrack,
     job_text: str,
-    role_weight: float = 0.6,
+    role_weight: float = 0.7,
 ) -> float:
     """Weighted cosine similarity between a candidate (profile + track) and a job.
 
@@ -80,7 +80,7 @@ def compute_match_score(
     repetition, which gets diluted once work history text is long.
 
     role_weight controls how much target roles dominate vs. general
-    skills/experience. Default 0.6 favors target roles, since which
+    skills/experience. Default 0.7 favors target roles, since which
     track a candidate is applying under should matter more than raw
     experience overlap.
     """
