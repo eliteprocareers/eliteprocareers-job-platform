@@ -24,6 +24,7 @@ Usage (admin, only for backend jobs — e.g. job ingestion writing to `jobs`):
 from typing import Any
 
 import httpx
+import time
 
 from eliteprocareers.config import settings
 
@@ -77,14 +78,34 @@ class SupabaseClient:
         return response.json()
 
     def insert(self, table: str, data: dict | list[dict]) -> list[dict]:
-        """POST new row(s). Returns the inserted row(s) (Prefer: return=representation)."""
+        """POST new row(s). Returns the inserted row(s) (Prefer: return=representation).
+
+        Retries up to 3 times on transient network failures (httpx.TransportError
+        and subclasses — connection drops, TLS record errors, etc., a known flaky
+        pattern on WSL2's networking stack). Does NOT retry on real HTTP error
+        responses (4xx/5xx) — those raise SupabaseError immediately as before.
+        """
         headers = {**self._headers, "Prefer": "return=representation"}
-        response = httpx.post(
-            f"{self.base_url}/{table}", headers=headers, json=data, timeout=15
-        )
-        if response.status_code >= 400:
-            raise SupabaseError(f"INSERT {table} failed ({response.status_code}): {response.text}")
-        return response.json()
+        url = f"{self.base_url}/{table}"
+
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = httpx.post(url, headers=headers, json=data, timeout=15)
+            except httpx.TransportError as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, then 2s
+                    continue
+                raise SupabaseError(
+                    f"INSERT {table} failed after 3 attempts due to network errors: {e}"
+                ) from e
+
+            if response.status_code >= 400:
+                raise SupabaseError(f"INSERT {table} failed ({response.status_code}): {response.text}")
+            return response.json()
+
+        raise SupabaseError(f"INSERT {table} failed after 3 attempts: {last_error}")
 
     def update(self, table: str, data: dict, params: dict) -> list[dict]:
         """PATCH matching rows. params must include a filter, e.g. {'id': 'eq.123'}."""

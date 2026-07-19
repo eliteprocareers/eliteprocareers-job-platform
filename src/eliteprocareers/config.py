@@ -3,7 +3,7 @@ Application configuration, loaded from environment variables / .env file.
 
 Usage:
     from eliteprocareers.config import settings
-    print(settings.gemini_api_key)
+    print(settings.groq_api_key)
 
 All config lives here. No other module should call os.getenv() directly —
 route new settings through this file so they're validated and typed in one place.
@@ -25,9 +25,15 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
 
-    # --- Google Gemini ---
+    # --- Groq (LLM provider) ---
     # Required — the app has no fallback for missing AI credentials
-    gemini_api_key: str
+    groq_api_key: str
+
+    # --- Google Gemini ---
+    # Kept optional — free tier hit a hard 0-quota wall (requires billing to
+    # unlock), switched primary LLM provider to Groq instead. Not deleted in
+    # case Gemini becomes viable again later.
+    gemini_api_key: str = ""
 
     # --- App ---
     app_env: str = "development"
