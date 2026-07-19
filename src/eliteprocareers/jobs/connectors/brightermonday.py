@@ -52,12 +52,22 @@ LISTING_URL_PATTERN = re.compile(
 
 
 def _resolve_ref(graph_index: dict, value):
-    """If value is a bare {'@id': ...} reference, look it up in the graph
-    index and return the resolved node. Otherwise return value unchanged
-    (some fields are inline objects, not references).
+    """Look up an @id in the graph index and return the resolved node.
+
+    Confirmed live 2026-07-19: some JobPosting.jobLocation values are a
+    HYBRID -- they carry an @id AND their own inline (but incomplete)
+    address stub at the same time, while a separate, complete Place node
+    with that same @id (properly referencing a full PostalAddress with
+    the real city) sits elsewhere in the top-level @graph array. An exact
+    single-key match missed this case and used the incomplete inline
+    stub instead of the fuller graph node. Any dict carrying an @id is
+    now resolved against the graph index first; only falls back to the
+    inline value if that @id is not found there.
     """
-    if isinstance(value, dict) and set(value.keys()) == {"@id"}:
-        return graph_index.get(value["@id"], value)
+    if isinstance(value, dict) and "@id" in value:
+        resolved = graph_index.get(value["@id"])
+        if resolved is not None:
+            return resolved
     return value
 
 
@@ -123,7 +133,14 @@ class BrighterMondayConnector(JobConnector):
             if isinstance(address, dict):
                 city = address.get("streetAddress")  # holds city, not street — confirmed live
                 country = address.get("addressCountry")
-                location = ", ".join(part for part in [city, country] if part) or None
+                # Some employers list nationwide "Kenya" with no specific
+                # city — confirmed live (Focus Clinical, Elite Offset) —
+                # in which case city and country are both just "Kenya".
+                # Drop the duplicate rather than showing "Kenya, Kenya".
+                parts = [p for p in [city, country] if p]
+                if len(parts) == 2 and parts[0] == parts[1]:
+                    parts = [parts[0]]
+                location = ", ".join(parts) or None
 
         job_id = job_node.get("@id", "")
         external_id = job_id.rsplit("/", 1)[-1] if job_id else url
