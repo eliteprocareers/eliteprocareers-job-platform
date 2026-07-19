@@ -147,19 +147,6 @@ class BambooHRConnector(JobConnector):
     )
 
 
-@registry.register
-class MyJobMagConnector(JobConnector):
-    source_name = "myjobmag"
-    support_tier = SupportTier.UNDER_RESEARCH
-    capabilities = ConnectorCapabilities()
-    notes = (
-        "No structured data (no JSON-LD, unlike BrighterMonday) — would "
-        "require raw HTML scraping with CSS selectors, fragile against page "
-        "redesigns. Worth checking their terms of service before building "
-        "even a basic scraper. Re-evaluate after BrighterMonday connector "
-        "proves out the value of Kenya-specific sourcing."
-    )
-
 
 @registry.register
 class TeamtailorConnector(JobConnector):

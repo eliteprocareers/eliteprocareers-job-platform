@@ -12,6 +12,7 @@ from eliteprocareers.jobs.connectors.base import SupportTier, ConnectorCapabilit
 from eliteprocareers.jobs.connectors import greenhouse  # noqa: F401
 from eliteprocareers.jobs.connectors import lever  # noqa: F401
 from eliteprocareers.jobs.connectors import brightermonday  # noqa: F401
+from eliteprocareers.jobs.connectors import myjobmag  # noqa: F401
 from eliteprocareers.jobs.connectors import roadmap  # noqa: F401
 
 __all__ = ["registry", "SupportTier", "ConnectorCapabilities"]
