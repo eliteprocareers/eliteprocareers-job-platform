@@ -7,8 +7,12 @@ stored for a given source once, filter new postings against that set
 in Python, and bulk-insert only what's actually new.
 """
 
-from eliteprocareers.db.client import SupabaseClient
+import logging
+
+from eliteprocareers.db.client import SupabaseClient, SupabaseError
 from eliteprocareers.jobs.models import Job
+
+logger = logging.getLogger(__name__)
 
 
 class JobRepository:
@@ -49,11 +53,42 @@ class JobRepository:
         """Insert a list of job payload dicts (already deduped by the caller)
         as-is. Each dict must match the jobs table columns (minus id/ingested_at,
         which default in the DB). Returns the inserted rows as Job objects.
+
+        Tries a single batch INSERT first (fast path). If that fails --
+        e.g. one row violates a NOT NULL constraint, which previously
+        killed the entire batch including valid rows (confirmed live with
+        MyJobMag's "Transport Manager" listing, company=None) -- falls back
+        to inserting one row at a time, logging and skipping only the rows
+        that actually fail, so one bad row from imperfect connector parsing
+        can never take down an otherwise-valid batch.
         """
         if not jobs:
             return []
-        rows = self.db.insert(self.TABLE, jobs)
-        return [Job.model_validate(row) for row in rows]
+
+        try:
+            rows = self.db.insert(self.TABLE, jobs)
+            return [Job.model_validate(row) for row in rows]
+        except SupabaseError as batch_error:
+            logger.warning(
+                "bulk_create: batch insert of %d rows failed (%s) -- "
+                "falling back to one-row-at-a-time",
+                len(jobs),
+                batch_error,
+            )
+
+        saved: list[Job] = []
+        for job in jobs:
+            try:
+                rows = self.db.insert(self.TABLE, job)
+                saved.extend(Job.model_validate(row) for row in rows)
+            except SupabaseError as row_error:
+                logger.warning(
+                    "bulk_create: skipped row (source=%s, external_id=%s): %s",
+                    job.get("source"),
+                    job.get("external_id"),
+                    row_error,
+                )
+        return saved
 
     def list_by_source(self, source: str) -> list[Job]:
         rows = self.db.select(self.TABLE, params={"select": "*", "source": f"eq.{source}"})

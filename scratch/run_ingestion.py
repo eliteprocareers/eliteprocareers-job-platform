@@ -28,6 +28,7 @@ SOURCE_TARGETS = {
     # enough to make the loop run fetch_jobs() once. board_token/
     # company_name are ignored via **kwargs in fetch_jobs().
     "brightermonday": {"kenya": "BrighterMonday Kenya"},
+    "myjobmag": {"kenya": "MyJobMag Kenya"},
 }
 
 

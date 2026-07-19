@@ -52,6 +52,18 @@ DESCRIPTION_PATTERN = re.compile(
 )
 LISTING_URL_PATTERN = re.compile(r'href="(/job/[a-z0-9-]+)"')
 
+# Fallback for listings with no "View Jobs at {Company}" link (confirmed
+# live 2026-07-19 on "Transport Manager at Karmec Company Ltd" -- link is
+# absent on some listings even though the company is real and present in
+# the page's <h1>, e.g. "{Title} at {Company}" inside <ul class="read-h1">.
+# Confirmed this h1 format is consistent by cross-checking against a known
+# -working listing ("Zonal Sales Manager - Mombasa CBD at HCS Affiliates
+# Group"). Use rsplit on the LAST " at " to avoid mis-splitting a title
+# that itself contains " at " (e.g. "Manager at Large Accounts").
+H1_TITLE_COMPANY_PATTERN = re.compile(
+    r'<ul class="read-h1">.*?<h1>\s*(.*?)\s*</h1>', re.DOTALL
+)
+
 
 def _strip_tags(raw: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
@@ -101,6 +113,18 @@ class MyJobMagConnector(JobConnector):
         # this quirk, so use that instead.
         company_match = COMPANY_LINK_PATTERN.search(text)
         company = html.unescape(company_match.group(1)).strip() if company_match else None
+
+        # Confirmed live: some listings (e.g. "Transport Manager at Karmec
+        # Company Ltd") have no "View Jobs at {Company}" link at all, even
+        # though the company is real. Fall back to the page's <h1>, which
+        # follows the same "{Title} at {Company}" format -- confirmed
+        # against both the broken listing and a known-working one.
+        if company is None:
+            h1_match = H1_TITLE_COMPANY_PATTERN.search(text)
+            if h1_match:
+                h1_text = html.unescape(h1_match.group(1)).strip()
+                if " at " in h1_text:
+                    company = h1_text.rsplit(" at ", 1)[1].strip()
 
         key_info = {
             _strip_tags(k): _strip_tags(v)
