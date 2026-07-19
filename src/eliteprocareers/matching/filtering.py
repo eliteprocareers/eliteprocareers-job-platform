@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from eliteprocareers.jobs.models import Job
 from eliteprocareers.matching.location import normalize_location
-from eliteprocareers.profiles.models import CVTrack
+from eliteprocareers.profiles.models import CandidateProfile, CVTrack
 
 
 class FilterOutcome(str, Enum):
@@ -210,6 +210,105 @@ def check_work_mode(track: CVTrack, job: Job) -> CriterionResult:
         criterion="work_mode",
         outcome=FilterOutcome.FAIL,
         detail=f"{job_work_mode} is not in work_mode {track.work_mode} (via {detail_source})",
+    )
+
+
+def check_relocation(track: CVTrack, job: Job, profile: CandidateProfile) -> CriterionResult:
+    """Only fires when preferred_countries is EMPTY -- if the candidate
+    already set an explicit country list, check_location owns that
+    decision entirely and this criterion steps aside (SKIP) to avoid
+    double-penalizing the same job for the same underlying reason.
+
+    With no explicit preferred_countries:
+    - willing_to_relocate=True -> SKIP, no restriction.
+    - willing_to_relocate=False -> compare the job's country against
+      the candidate's home country (profile.location). Mismatch means
+      the candidate isn't willing to relocate for this job.
+
+    Takes `profile` as a third argument (unlike every other criterion
+    so far) because it's the only one that needs the candidate's own
+    location, not just track preferences.
+    """
+    if track.preferred_countries:
+        return CriterionResult(
+            criterion="relocation",
+            outcome=FilterOutcome.SKIP,
+            detail="preferred_countries is set -- handled by check_location instead",
+        )
+
+    if track.willing_to_relocate:
+        return CriterionResult(
+            criterion="relocation",
+            outcome=FilterOutcome.SKIP,
+            detail="willing_to_relocate=True, no restriction",
+        )
+
+    job_normalized = normalize_location(job.location, job.attributes)
+    if job_normalized is None or job_normalized.country is None:
+        return CriterionResult(
+            criterion="relocation",
+            outcome=FilterOutcome.SKIP,
+            detail=f"job location could not be resolved (raw: {job.location!r})",
+        )
+
+    home_normalized = normalize_location(profile.location, None)
+    if home_normalized is None or home_normalized.country is None:
+        return CriterionResult(
+            criterion="relocation",
+            outcome=FilterOutcome.SKIP,
+            detail=f"candidate home location could not be resolved (raw: {profile.location!r})",
+        )
+
+    if job_normalized.country == home_normalized.country:
+        return CriterionResult(
+            criterion="relocation",
+            outcome=FilterOutcome.PASS,
+            detail=f"job is in candidate's home country ({home_normalized.country})",
+        )
+
+    return CriterionResult(
+        criterion="relocation",
+        outcome=FilterOutcome.FAIL,
+        detail=(
+            f"job is in {job_normalized.country}, candidate's home country is "
+            f"{home_normalized.country} and willing_to_relocate=False"
+        ),
+    )
+
+
+def check_visa_sponsorship(track: CVTrack, job: Job) -> CriterionResult:
+    """visa_sponsorship_required=None or False both mean 'no
+    restriction' -- only an explicit True triggers a check. Mirrors the
+    job.attributes pattern from employment_type/seniority/industry:
+    missing job data means SKIP, not FAIL.
+    """
+    if not track.visa_sponsorship_required:
+        return CriterionResult(
+            criterion="visa_sponsorship",
+            outcome=FilterOutcome.SKIP,
+            detail="visa sponsorship not required by this track",
+        )
+
+    job_offers_sponsorship = job.attributes.get("visa_sponsorship")
+
+    if job_offers_sponsorship is None:
+        return CriterionResult(
+            criterion="visa_sponsorship",
+            outcome=FilterOutcome.SKIP,
+            detail="job doesn't specify visa sponsorship (connector doesn't populate it yet)",
+        )
+
+    if job_offers_sponsorship:
+        return CriterionResult(
+            criterion="visa_sponsorship",
+            outcome=FilterOutcome.PASS,
+            detail="job offers visa sponsorship",
+        )
+
+    return CriterionResult(
+        criterion="visa_sponsorship",
+        outcome=FilterOutcome.FAIL,
+        detail="candidate requires visa sponsorship, job does not offer it",
     )
 
 
