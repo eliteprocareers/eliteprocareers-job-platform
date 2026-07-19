@@ -5,6 +5,9 @@ enough to run per-track per-job. This module only computes a raw similarity
 score; it does not write to the database and does not generate rationale
 text (that's a separate module using Gemini).
 """
+import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer, util
