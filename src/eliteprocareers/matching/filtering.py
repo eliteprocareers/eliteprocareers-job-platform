@@ -34,6 +34,48 @@ class CriterionResult(BaseModel):
     detail: str | None = None
 
 
+def check_employment_type(track: CVTrack, job: Job) -> CriterionResult:
+    """Exact match against job.attributes['employment_type'] (e.g.
+    'full_time', 'part_time', 'contract', 'internship'). No
+    normalization layer needed here unlike location -- this is a
+    closed, small vocabulary that connectors populate directly, not
+    free text a job board writes in its own words.
+
+    NOTE: as of migration 0003, no connector populates
+    attributes['employment_type'] yet -- this criterion will SKIP on
+    all current real data until a connector is updated to extract it.
+    That's correct, expected behavior (unknown = skip), not a bug.
+    """
+    if not track.employment_types:
+        return CriterionResult(
+            criterion="employment_type",
+            outcome=FilterOutcome.SKIP,
+            detail="no employment_types set on this track",
+        )
+
+    job_employment_type = job.attributes.get("employment_type")
+
+    if not job_employment_type:
+        return CriterionResult(
+            criterion="employment_type",
+            outcome=FilterOutcome.SKIP,
+            detail="job has no employment_type attribute (connector doesn't populate it yet)",
+        )
+
+    if job_employment_type in track.employment_types:
+        return CriterionResult(
+            criterion="employment_type",
+            outcome=FilterOutcome.PASS,
+            detail=f"{job_employment_type} is in employment_types",
+        )
+
+    return CriterionResult(
+        criterion="employment_type",
+        outcome=FilterOutcome.FAIL,
+        detail=f"{job_employment_type} is not in employment_types {track.employment_types}",
+    )
+
+
 def check_location(track: CVTrack, job: Job) -> CriterionResult:
     """Country-level check only for now (state/city precision can be
     added later if real data shows it's needed). willing_to_relocate is
