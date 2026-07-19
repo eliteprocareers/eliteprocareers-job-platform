@@ -23,6 +23,11 @@ from eliteprocareers.jobs.repository import JobRepository
 SOURCE_TARGETS = {
     "greenhouse": GREENHOUSE_BOARDS,
     "lever": LEVER_SITES,
+    # Not per-company like Greenhouse/Lever -- BrighterMonday crawls the
+    # whole site's /jobs listing pages, so one placeholder entry is
+    # enough to make the loop run fetch_jobs() once. board_token/
+    # company_name are ignored via **kwargs in fetch_jobs().
+    "brightermonday": {"kenya": "BrighterMonday Kenya"},
 }
 
 
