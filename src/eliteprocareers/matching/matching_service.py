@@ -17,6 +17,7 @@ must NOT reuse service_role for the match-write step; it should
 construct a user-scoped SupabaseClient instead, per
 matching/repository.py's docstring.
 """
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -56,6 +57,7 @@ def run_matching_for_track(
     user_id: UUID,
     track_id: UUID,
     db: SupabaseClient | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> MatchingSummary:
     """Runs Stage-1 + Stage-2 for one CV track against every job
     currently in the `jobs` table.
@@ -67,6 +69,13 @@ def run_matching_for_track(
     SKIPped) gets scored and its match row upserted, even at a low
     score -- a low real score is still useful signal, unlike a
     Stage-1 FAIL which isn't a scoring question at all.
+
+    on_progress, if given, is called as on_progress(jobs_done, jobs_total)
+    after every job (pass or fail) -- stays a no-op by default so the
+    service itself never prints; scripts/run_matching.py supplies a
+    real callback so the CLI isn't silent for the several minutes this
+    can take on ~3000 jobs (Stage-2 embedding + two Supabase round-trips
+    per upsert_match() call, for every job that passes Stage 1).
     """
     db = db or SupabaseClient(use_service_role=True)
 
@@ -90,8 +99,9 @@ def run_matching_for_track(
     outcomes: list[MatchOutcome] = []
     stage1_passed = 0
     stage1_failed = 0
+    total_jobs = len(jobs)
 
-    for job in jobs:
+    for i, job in enumerate(jobs, start=1):
         results = run_stage1_filters(track, job, profile)
 
         if not passes_stage1(results):
@@ -104,6 +114,8 @@ def run_matching_for_track(
                     stage1_results=results,
                 )
             )
+            if on_progress is not None:
+                on_progress(i, total_jobs)
             continue
 
         stage1_passed += 1
@@ -126,6 +138,9 @@ def run_matching_for_track(
                 match_score=score,
             )
         )
+
+        if on_progress is not None:
+            on_progress(i, total_jobs)
 
     return MatchingSummary(
         track_id=track_id,
