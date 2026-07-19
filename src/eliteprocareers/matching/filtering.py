@@ -157,6 +157,62 @@ def check_industry(track: CVTrack, job: Job) -> CriterionResult:
     )
 
 
+def check_work_mode(track: CVTrack, job: Job) -> CriterionResult:
+    """Match against track.work_mode (e.g. 'remote', 'hybrid',
+    'onsite'). Two-tier signal, unlike the previous three criteria:
+
+    1. job.attributes['work_mode'] (structured, connector-populated --
+       not populated by any connector yet, same as the other criteria).
+    2. Fallback: normalize_location()'s remote flag (from
+       matching/location.py). If a job's location text says "Remote",
+       we can confidently call job_work_mode='remote' TODAY, without
+       waiting on connector work -- unlike employment_type/seniority/
+       industry, which have no fallback and SKIP on all real data.
+
+    IMPORTANT: the fallback can only ever positively identify 'remote'.
+    If normalize_location() does NOT flag a job remote, that does NOT
+    mean onsite -- location text alone can't distinguish onsite from
+    hybrid. So a non-remote signal from tier 2 stays SKIP, never FAIL.
+    Guessing onsite vs hybrid from location text would risk wrongly
+    failing a real hybrid job.
+    """
+    if not track.work_mode:
+        return CriterionResult(
+            criterion="work_mode",
+            outcome=FilterOutcome.SKIP,
+            detail="no work_mode set on this track",
+        )
+
+    job_work_mode = job.attributes.get("work_mode")
+    detail_source = "job.attributes"
+
+    if not job_work_mode:
+        normalized = normalize_location(job.location, job.attributes)
+        if normalized is not None and normalized.remote:
+            job_work_mode = "remote"
+            detail_source = "location remote-flag fallback"
+
+    if not job_work_mode:
+        return CriterionResult(
+            criterion="work_mode",
+            outcome=FilterOutcome.SKIP,
+            detail="job has no work_mode attribute and location text isn't flagged remote",
+        )
+
+    if job_work_mode in track.work_mode:
+        return CriterionResult(
+            criterion="work_mode",
+            outcome=FilterOutcome.PASS,
+            detail=f"{job_work_mode} is in work_mode (via {detail_source})",
+        )
+
+    return CriterionResult(
+        criterion="work_mode",
+        outcome=FilterOutcome.FAIL,
+        detail=f"{job_work_mode} is not in work_mode {track.work_mode} (via {detail_source})",
+    )
+
+
 def check_location(track: CVTrack, job: Job) -> CriterionResult:
     """Country-level check only for now (state/city precision can be
     added later if real data shows it's needed). willing_to_relocate is
