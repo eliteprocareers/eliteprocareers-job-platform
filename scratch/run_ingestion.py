@@ -14,13 +14,15 @@ No password needed — reads SUPABASE_SERVICE_ROLE_KEY from .env.
 from eliteprocareers.db.client import SupabaseClient
 from eliteprocareers.jobs.connectors import registry
 from eliteprocareers.jobs.known_boards import GREENHOUSE_BOARDS
+from eliteprocareers.jobs.known_lever_sites import LEVER_SITES
 from eliteprocareers.jobs.repository import JobRepository
 
 # Per-source board/company lists a connector needs to know what to poll.
-# Only Greenhouse has one today; each future connector with
-# scheduled_polling=True gets its own entry here as it's built.
+# Each connector with scheduled_polling=True gets its own entry here as
+# it's built.
 SOURCE_TARGETS = {
     "greenhouse": GREENHOUSE_BOARDS,
+    "lever": LEVER_SITES,
 }
 
 

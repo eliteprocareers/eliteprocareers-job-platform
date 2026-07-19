@@ -10,6 +10,7 @@ from eliteprocareers.jobs.connectors.base import SupportTier, ConnectorCapabilit
 # Import order doesn't matter for registration, but keep reference
 # implementation first for readability.
 from eliteprocareers.jobs.connectors import greenhouse  # noqa: F401
+from eliteprocareers.jobs.connectors import lever  # noqa: F401
 from eliteprocareers.jobs.connectors import roadmap  # noqa: F401
 
 __all__ = ["registry", "SupportTier", "ConnectorCapabilities"]

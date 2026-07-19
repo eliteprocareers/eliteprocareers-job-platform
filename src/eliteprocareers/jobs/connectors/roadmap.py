@@ -20,18 +20,6 @@ from eliteprocareers.jobs.connectors.registry import registry
 # ---- FULLY_SUPPORTED, not yet built (confirmed feasible, next in line) ----
 
 @registry.register
-class LeverConnector(JobConnector):
-    source_name = "lever"
-    support_tier = SupportTier.FULLY_SUPPORTED
-    capabilities = ConnectorCapabilities(scheduled_polling=True, full_job_details=True)
-    notes = (
-        "Public JSON API, no auth: api.lever.co/v0/postings/{company}?mode=json. "
-        "Confirmed via third-party ATS comparison research 2026-07-19. "
-        "Not yet implemented — next connector after Greenhouse."
-    )
-
-
-@registry.register
 class AshbyConnector(JobConnector):
     source_name = "ashby"
     support_tier = SupportTier.FULLY_SUPPORTED
