@@ -93,3 +93,26 @@ class JobRepository:
     def list_by_source(self, source: str) -> list[Job]:
         rows = self.db.select(self.TABLE, params={"select": "*", "source": f"eq.{source}"})
         return [Job.model_validate(row) for row in rows]
+
+    def list_all(self) -> list[Job]:
+        """Every job across every source, paginated -- same PostgREST
+        1000-row cap that get_existing_external_ids() already handles
+        for a single source. Used by the matching pipeline, which needs
+        to consider every job in the table, not just one source at a
+        time.
+        """
+        page_size = 1000
+        offset = 0
+        all_jobs: list[Job] = []
+
+        while True:
+            rows = self.db.select(
+                self.TABLE,
+                params={"select": "*", "limit": page_size, "offset": offset},
+            )
+            all_jobs.extend(Job.model_validate(row) for row in rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+
+        return all_jobs
