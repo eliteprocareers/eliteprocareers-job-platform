@@ -54,19 +54,6 @@ class RecruiteeConnector(JobConnector):
     )
 
 
-@registry.register
-class BrighterMondayConnector(JobConnector):
-    source_name = "brightermonday"
-    support_tier = SupportTier.FULLY_SUPPORTED
-    capabilities = ConnectorCapabilities(scheduled_polling=True, full_job_details=True)
-    notes = (
-        "Job detail pages embed Schema.org JobPosting JSON-LD — structured "
-        "data intentionally published for Google for Jobs indexing, not "
-        "reverse-engineered. Most Kenya-relevant source identified so far. "
-        "Confirmed 2026-07-19. Not yet implemented — high priority, and its "
-        "JSON-LD parser is the same code url_import.py will reuse."
-    )
-
 
 # ---- USER_ASSISTED — single-URL, user-initiated only, no bulk access ----
 
