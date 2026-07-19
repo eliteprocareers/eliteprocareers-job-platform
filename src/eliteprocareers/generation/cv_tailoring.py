@@ -26,9 +26,10 @@ def build_cv_prompt(profile: FullProfile, track: CVTrack, job_description: str) 
 
     work_lines = []
     for w in profile.work_experience:
-        end = "Present" if w.is_current else (w.end_date or "")
+        start = w.start_date or "unknown start date"
+        end = "Present" if w.is_current else (w.end_date or "unknown end date")
         work_lines.append(
-            f"- {w.title} at {w.company} ({w.start_date} to {end}): {w.description or ''}"
+            f"- {w.title} at {w.company} ({start} to {end}): {w.description or ''}"
         )
     work_text = "\n".join(work_lines)
 
