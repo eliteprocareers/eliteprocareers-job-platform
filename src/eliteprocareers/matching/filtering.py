@@ -117,6 +117,46 @@ def check_seniority(track: CVTrack, job: Job) -> CriterionResult:
     )
 
 
+def check_industry(track: CVTrack, job: Job) -> CriterionResult:
+    """Exact match against job.attributes['industry'] vs
+    track.industries. Same shape as check_employment_type and
+    check_seniority -- connector-populated, no normalization layer
+    needed.
+
+    NOTE: as of migration 0003, no connector populates
+    attributes['industry'] yet -- this criterion will SKIP on all
+    current real data until a connector is updated to extract it.
+    """
+    if not track.industries:
+        return CriterionResult(
+            criterion="industry",
+            outcome=FilterOutcome.SKIP,
+            detail="no industries set on this track",
+        )
+
+    job_industry = job.attributes.get("industry")
+
+    if not job_industry:
+        return CriterionResult(
+            criterion="industry",
+            outcome=FilterOutcome.SKIP,
+            detail="job has no industry attribute (connector doesn't populate it yet)",
+        )
+
+    if job_industry in track.industries:
+        return CriterionResult(
+            criterion="industry",
+            outcome=FilterOutcome.PASS,
+            detail=f"{job_industry} is in industries",
+        )
+
+    return CriterionResult(
+        criterion="industry",
+        outcome=FilterOutcome.FAIL,
+        detail=f"{job_industry} is not in industries {track.industries}",
+    )
+
+
 def check_location(track: CVTrack, job: Job) -> CriterionResult:
     """Country-level check only for now (state/city precision can be
     added later if real data shows it's needed). willing_to_relocate is
