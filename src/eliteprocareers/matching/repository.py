@@ -82,6 +82,20 @@ class UserJobMatchRepository:
         rows = self.db.insert(self.TABLE, payload)
         return UserJobMatch.model_validate(rows[0])
 
+    def update_rationale(self, match_id: UUID, ai_rationale: str) -> UserJobMatch:
+        """Writes ai_rationale for an existing match row without touching
+        match_score. Deliberately separate from upsert_match(), which
+        requires (and would overwrite) match_score -- a rationale-only
+        backfill pass has no new score to give it and shouldn't risk
+        clobbering a real one with a stale re-read.
+        """
+        rows = self.db.update(
+            self.TABLE,
+            {"ai_rationale": ai_rationale},
+            params={"id": f"eq.{match_id}"},
+        )
+        return UserJobMatch.model_validate(rows[0])
+
     def delete_match(self, match_id: UUID) -> None:
         """Deletes one match row by id. Used by cleanup scripts to remove
         stale matches -- e.g. a row scored before Stage-1 filtering
