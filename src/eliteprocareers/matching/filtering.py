@@ -118,14 +118,19 @@ def check_seniority(track: CVTrack, job: Job) -> CriterionResult:
 
 
 def check_industry(track: CVTrack, job: Job) -> CriterionResult:
-    """Exact match against job.attributes['industry'] vs
-    track.industries. Same shape as check_employment_type and
-    check_seniority -- connector-populated, no normalization layer
-    needed.
+    """Match against job.attributes['industry'] vs track.industries.
 
-    NOTE: as of migration 0003, no connector populates
-    attributes['industry'] yet -- this criterion will SKIP on all
-    current real data until a connector is updated to extract it.
+    Unlike check_employment_type/check_seniority, job.attributes['industry']
+    is genuinely MULTI-VALUE on real data -- MyJobMag's "Job Field" source
+    field commonly lists 2-3 categories for one job (confirmed live,
+    e.g. "Data, Business Analysis and AI" + "ICT / Computer" as two
+    distinct categories on the same posting). A job passes if ANY of its
+    categories overlaps track.industries, not just an exact single-value
+    match -- a job tagged both "Data, Business Analysis and AI" and
+    "ICT / Computer" should match a candidate who only listed "ICT /
+    Computer" as a desired industry. Still accepts a single string (not
+    a list) for backward-compatibility with any future connector that
+    only ever writes one value.
     """
     if not track.industries:
         return CriterionResult(
@@ -143,17 +148,20 @@ def check_industry(track: CVTrack, job: Job) -> CriterionResult:
             detail="job has no industry attribute (connector doesn't populate it yet)",
         )
 
-    if job_industry in track.industries:
+    job_industries = job_industry if isinstance(job_industry, list) else [job_industry]
+    matched = [i for i in job_industries if i in track.industries]
+
+    if matched:
         return CriterionResult(
             criterion="industry",
             outcome=FilterOutcome.PASS,
-            detail=f"{job_industry} is in industries",
+            detail=f"{matched} overlaps industries {track.industries}",
         )
 
     return CriterionResult(
         criterion="industry",
         outcome=FilterOutcome.FAIL,
-        detail=f"{job_industry} is not in industries {track.industries}",
+        detail=f"{job_industries} has no overlap with industries {track.industries}",
     )
 
 
