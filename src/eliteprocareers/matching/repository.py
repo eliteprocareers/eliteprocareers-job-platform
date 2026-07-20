@@ -95,14 +95,32 @@ class UserJobMatchRepository:
         """All matches for a given CV track, best-first. min_score filters
         out low-quality matches (e.g. 0.3) so callers don't have to sort
         through noise -- optional since some callers may want everything.
-        """
-        params = {
-            "select": "*",
-            "cv_track_id": f"eq.{cv_track_id}",
-            "order": "match_score.desc",
-        }
-        if min_score is not None:
-            params["match_score"] = f"gte.{min_score}"
 
-        rows = self.db.select(self.TABLE, params=params)
-        return [UserJobMatch.model_validate(r) for r in rows]
+        Paginated -- PostgREST caps unpaginated GET responses at 1000 rows
+        by default. Confirmed live 2026-07-20: both of James's tracks
+        returned exactly 1000 rows each before this fix, silently
+        truncating cleanup_stale_matches.py's dry run. Same cap, same
+        fix pattern as JobRepository.get_existing_external_ids()/list_all().
+        """
+        page_size = 1000
+        offset = 0
+        all_matches: list[UserJobMatch] = []
+
+        while True:
+            params = {
+                "select": "*",
+                "cv_track_id": f"eq.{cv_track_id}",
+                "order": "match_score.desc",
+                "limit": page_size,
+                "offset": offset,
+            }
+            if min_score is not None:
+                params["match_score"] = f"gte.{min_score}"
+
+            rows = self.db.select(self.TABLE, params=params)
+            all_matches.extend(UserJobMatch.model_validate(r) for r in rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+
+        return all_matches
