@@ -82,6 +82,13 @@ class UserJobMatchRepository:
         rows = self.db.insert(self.TABLE, payload)
         return UserJobMatch.model_validate(rows[0])
 
+    def delete_match(self, match_id: UUID) -> None:
+        """Deletes one match row by id. Used by cleanup scripts to remove
+        stale matches -- e.g. a row scored before Stage-1 filtering
+        existed, for a job that would now FAIL Stage 1.
+        """
+        self.db.delete(self.TABLE, params={"id": f"eq.{match_id}"})
+
     def list_matches_for_track(
         self, cv_track_id: UUID, min_score: float | None = None
     ) -> list[UserJobMatch]:
