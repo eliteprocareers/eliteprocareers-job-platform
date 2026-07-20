@@ -109,6 +109,33 @@ CITY_COUNTRY_MAP: dict[str, str] = {
     "kuwait city": "Kuwait",
     "muscat": "Oman",
     "manama": "Bahrain",
+    # Major global cities -- added 2026-07-20 after confirming live that
+    # James's real top matches included Meesho (Bangalore/Mumbai), Asana
+    # (London/SF/Chicago/NYC), Squarespace (NYC/Dublin), Stripe (SF/NYC/
+    # Seattle/Chicago/Toronto) postings passing Stage-1 uncontested --
+    # none of these bare city names contain an explicit country name or
+    # ISO code, so normalize_location() correctly returned None per its
+    # documented behavior, and check_relocation correctly SKIPped (not
+    # FAILed) on unknown location -- but the practical effect for a
+    # Nairobi-based, non-relocating candidate is that every curated
+    # Greenhouse/Lever company's posting (structurally never Kenya-
+    # market) silently bypassed the relocation check entirely. Not an
+    # attempt to cover "every city on Earth" -- scoped specifically to
+    # what's actually been observed passing through uncaught.
+    "london": "United Kingdom",
+    "dublin": "Ireland",
+    "new york city": "United States",
+    "new york": "United States",
+    "nyc": "United States",
+    "san francisco": "United States",
+    "sf": "United States",
+    "seattle": "United States",
+    "chicago": "United States",
+    "atlanta": "United States",
+    "toronto": "Canada",
+    "vancouver": "Canada",
+    "bangalore": "India",
+    "mumbai": "India",
 }
 
 REMOTE_KEYWORDS = ("remote", "work from home", "wfh")
