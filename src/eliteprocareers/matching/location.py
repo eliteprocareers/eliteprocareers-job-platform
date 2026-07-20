@@ -136,6 +136,19 @@ CITY_COUNTRY_MAP: dict[str, str] = {
     "vancouver": "Canada",
     "bangalore": "India",
     "mumbai": "India",
+    # Round 2 -- added after the tier 4b substring fix, confirmed live
+    # against James's re-exported matches: Asana (Warsaw), Discord (San
+    # Francisco Bay Area -- caught by 4b, no table entry needed), Stripe
+    # (Bengaluru, Sydney, Melbourne, Paris), Squarespace (Aveiro), Meesho
+    # (Delhi). Same "scoped to what's actually been observed" approach
+    # as round 1, not an attempt at exhaustive coverage.
+    "warsaw": "Poland",
+    "bengaluru": "India",  # alt spelling of Bangalore, seen in Stripe postings
+    "delhi": "India",
+    "sydney": "Australia",
+    "melbourne": "Australia",
+    "paris": "France",
+    "aveiro": "Portugal",
 }
 
 REMOTE_KEYWORDS = ("remote", "work from home", "wfh")
@@ -278,6 +291,29 @@ def normalize_location(
                     country=country.name,
                     country_code=country.alpha_2,
                     city=token.strip(),
+                    remote=is_remote_hint,
+                    confidence="city_table",
+                    raw_text=location_text,
+                )
+
+    # Tier 4b: word-boundary substring fallback. Confirmed live
+    # 2026-07-20 that exact-token matching alone missed real compound
+    # strings that never split into a clean standalone city token --
+    # e.g. Discord's "San Francisco Bay Area" (one token, not equal to
+    # "san francisco"), Stripe's "NY or SF" (one token, no comma at
+    # all). Scans the full text for any known city name as a whole
+    # word (regex \b boundaries, not a bare substring check) so this
+    # can't false-positive match a city name embedded inside an
+    # unrelated word. Still exact known-city-name matching, same
+    # discipline as the rest of this module -- no fuzzy matching.
+    for city_name, country_name in CITY_COUNTRY_MAP.items():
+        if re.search(rf"\b{re.escape(city_name)}\b", location_text, re.IGNORECASE):
+            country = _lookup_country_exact(country_name)
+            if country:
+                return NormalizedLocation(
+                    country=country.name,
+                    country_code=country.alpha_2,
+                    city=city_name,
                     remote=is_remote_hint,
                     confidence="city_table",
                     raw_text=location_text,
