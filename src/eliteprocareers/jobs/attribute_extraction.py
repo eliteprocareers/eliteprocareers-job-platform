@@ -174,6 +174,8 @@ def extract_myjobmag_attributes(raw_json: dict) -> tuple[dict, list[str]]:
     canonical, unmapped = normalize_categories(raw_categories, SOURCE_MYJOBMAG_JOB_FIELD_MAP)
     if canonical:
         attributes["industry"] = canonical
+    if raw_categories:
+        attributes["industry_raw"] = raw_categories
 
     return attributes, unmapped
 
@@ -230,5 +232,9 @@ def extract_brightermonday_attributes(raw_json: dict) -> tuple[dict, list[str]]:
             deduped.append(c)
     if deduped:
         attributes["industry"] = deduped
+
+    raw_categories = [v for v in (raw_json.get("industry"), raw_json.get("occupationalCategory")) if v]
+    if raw_categories:
+        attributes["industry_raw"] = raw_categories
 
     return attributes, unmapped

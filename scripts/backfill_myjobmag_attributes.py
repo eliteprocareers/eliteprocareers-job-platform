@@ -59,9 +59,12 @@ def main() -> int:
     examples: list[tuple[str, dict]] = []
     updated = 0
 
+    all_unmapped: Counter[str] = Counter()
+
     for row in rows:
         raw_json = row.get("raw_json") or {}
-        attributes = extract_myjobmag_attributes(raw_json)
+        attributes, unmapped = extract_myjobmag_attributes(raw_json)
+        all_unmapped.update(unmapped)
 
         if not attributes:
             empty_count += 1
@@ -82,6 +85,14 @@ def main() -> int:
         print(f"  {key:20s} {count}")
     print(f"  {'(no fields extracted)':20s} {empty_count}")
     print()
+
+    if all_unmapped:
+        print("UNMAPPED Job Field categories (need adding to SOURCE_MYJOBMAG_JOB_FIELD_MAP):")
+        for value, count in all_unmapped.most_common():
+            print(f"  {count:3d}  {value!r}")
+        print()
+    else:
+        print("No unmapped Job Field categories -- every raw value has a taxonomy mapping.\n")
 
     print("Example rows:")
     for title, attributes in examples:

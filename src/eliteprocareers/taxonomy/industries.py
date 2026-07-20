@@ -51,6 +51,7 @@ CANONICAL_INDUSTRIES = frozenset(
         "Tourism & Travel",
         "Agriculture",
         "Hospitality",
+        "Health, Wellness & Fitness",
         "IT & Telecoms",
         "Media & Advertising",
         "Entertainment & Events",
@@ -172,6 +173,20 @@ SOURCE_MYJOBMAG_JOB_FIELD_MAP: dict[str, str | list[str] | None] = {
     # attributes["employment_type"] == "internship". Explicitly
     # excluded rather than invented as a fake category.
     "Internships": None,
+    # Added 2026-07-20 after review of live UNMAPPED report from the
+    # MyJobMag backfill dry run (12 categories, 20 jobs total):
+    "Media Production and Entertainment": ["Media, Content & Journalism", "Entertainment & Events"],
+    "Graduate Jobs": None,  # program type, not an industry -- same treatment as Internships
+    "Insurance": "Banking & Insurance",
+    "Consultancy": "Management & Business Development",
+    "Aviation / Aerospace": ["Engineering & Technology", "Logistics & Transport"],
+    "Product Management": "Product & Project Management",
+    "Legal and Regulatory": "Legal",
+    "Janitorial Services": "Trades & Services",
+    "Shipping and Maritime": ["Logistics & Transport", "Supply Chain & Procurement"],
+    "NGO/Non-Profit": "NGO & Nonprofit",
+    "UX, Design and Architecture": "Creative & Design",
+    "Sports, Fitness and Personal Care": "Health, Wellness & Fitness",
 }
 
 # --- CVTrack.track_name -> canonical categories ---
