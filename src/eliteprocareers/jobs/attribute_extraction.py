@@ -42,8 +42,16 @@ BrighterMonday raw_json fields used (confirmed live, 80 jobs):
 - industry + occupationalCategory: both genuinely populated (confirmed
   live, 17 + 21 distinct values respectively, "Unspecified" sentinels
   mapped to None), combined into one deduplicated canonical list.
-- baseSalary: present but not extracted this pass -- schema.org
-  MonetaryAmount shape confirmed live but not yet parsed; revisit later.
+- baseSalary: schema.org MonetaryAmount, e.g. {"value": {"minValue":...,
+  "maxValue":..., "unitText": "MONTH"}, "currency": "KES"} -- confirmed
+  live, 14/80 jobs sampled, unitText is MONTH on every sample seen so
+  far (0 KES-15K band is a real low bracket, not a "not disclosed"
+  sentinel -- confirmed by checking all 14 sampled rows, values are
+  self-consistent 15K-wide bands throughout). Extracted into
+  salary_min/salary_max/salary_currency ONLY when unitText == "MONTH" --
+  no unit conversion in this project, so a future YEAR/HOUR value is
+  silently skipped rather than guessed at, same non-guessing rule as
+  everywhere else in this module.
 """
 import re
 
@@ -232,6 +240,20 @@ def extract_brightermonday_attributes(raw_json: dict) -> tuple[dict, list[str]]:
             deduped.append(c)
     if deduped:
         attributes["industry"] = deduped
+
+    base_salary = raw_json.get("baseSalary")
+    if isinstance(base_salary, dict):
+        salary_value = base_salary.get("value")
+        if isinstance(salary_value, dict) and salary_value.get("unitText") == "MONTH":
+            salary_min = salary_value.get("minValue")
+            salary_max = salary_value.get("maxValue")
+            currency = base_salary.get("currency")
+            if salary_min is not None:
+                attributes["salary_min"] = salary_min
+            if salary_max is not None:
+                attributes["salary_max"] = salary_max
+            if currency:
+                attributes["salary_currency"] = currency
 
     raw_categories = [v for v in (raw_json.get("industry"), raw_json.get("occupationalCategory")) if v]
     if raw_categories:
