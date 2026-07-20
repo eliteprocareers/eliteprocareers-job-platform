@@ -58,19 +58,45 @@ class SupabaseClient:
             "Content-Type": "application/json",
         }
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        response = httpx.request(
-            method,
-            f"{self.base_url}/{path}",
-            headers=self._headers,
-            timeout=15,
-            **kwargs,
-        )
-        if response.status_code >= 400:
-            raise SupabaseError(
-                f"{method} {path} failed ({response.status_code}): {response.text}"
-            )
-        return response
+    def _request(self, method: str, path: str, headers: dict | None = None, **kwargs) -> httpx.Response:
+        """Every DB call funnels through here. Retries up to 3 times on
+        transient network failures (httpx.TransportError and subclasses --
+        connection drops, TLS record-layer errors, read timeouts -- a known
+        flaky pattern on WSL2's networking stack, confirmed live 2026-07-20
+        when a ~27-minute matching run left a stale connection that then
+        failed with SSL RECORD_LAYER_FAILURE, then ReadTimeout, on the very
+        next call). Does NOT retry on real HTTP error responses (4xx/5xx) --
+        those raise SupabaseError immediately, no retry, same as before.
+
+        This retry logic previously existed only in insert() (added in an
+        earlier session) -- select()/update()/delete() had none, which is
+        exactly what crashed live during Stage-1 matching runs. Consolidated
+        here so every method gets it, instead of each one duplicating its
+        own copy.
+        """
+        request_headers = {**self._headers, **(headers or {})}
+        url = f"{self.base_url}/{path}"
+
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = httpx.request(method, url, headers=request_headers, timeout=15, **kwargs)
+            except httpx.TransportError as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, then 2s
+                    continue
+                raise SupabaseError(
+                    f"{method} {path} failed after 3 attempts due to network errors: {e}"
+                ) from e
+            else:
+                if response.status_code >= 400:
+                    raise SupabaseError(
+                        f"{method} {path} failed ({response.status_code}): {response.text}"
+                    )
+                return response
+
+        raise SupabaseError(f"{method} {path} failed after 3 attempts: {last_error}")
 
     def select(self, table: str, params: dict | None = None) -> list[dict]:
         """GET rows. params supports PostgREST query syntax, e.g. {'select': '*', 'id': 'eq.123'}."""
@@ -78,51 +104,22 @@ class SupabaseClient:
         return response.json()
 
     def insert(self, table: str, data: dict | list[dict]) -> list[dict]:
-        """POST new row(s). Returns the inserted row(s) (Prefer: return=representation).
-
-        Retries up to 3 times on transient network failures (httpx.TransportError
-        and subclasses — connection drops, TLS record errors, etc., a known flaky
-        pattern on WSL2's networking stack). Does NOT retry on real HTTP error
-        responses (4xx/5xx) — those raise SupabaseError immediately as before.
-        """
-        headers = {**self._headers, "Prefer": "return=representation"}
-        url = f"{self.base_url}/{table}"
-
-        last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                response = httpx.post(url, headers=headers, json=data, timeout=15)
-            except httpx.TransportError as e:
-                last_error = e
-                if attempt < 2:
-                    time.sleep(2 ** attempt)  # 1s, then 2s
-                    continue
-                raise SupabaseError(
-                    f"INSERT {table} failed after 3 attempts due to network errors: {e}"
-                ) from e
-
-            if response.status_code >= 400:
-                raise SupabaseError(f"INSERT {table} failed ({response.status_code}): {response.text}")
-            return response.json()
-
-        raise SupabaseError(f"INSERT {table} failed after 3 attempts: {last_error}")
+        """POST new row(s). Returns the inserted row(s) (Prefer: return=representation)."""
+        response = self._request(
+            "POST", table, headers={"Prefer": "return=representation"}, json=data
+        )
+        return response.json()
 
     def update(self, table: str, data: dict, params: dict) -> list[dict]:
         """PATCH matching rows. params must include a filter, e.g. {'id': 'eq.123'}."""
-        headers = {**self._headers, "Prefer": "return=representation"}
-        response = httpx.patch(
-            f"{self.base_url}/{table}", headers=headers, params=params, json=data, timeout=15
+        response = self._request(
+            "PATCH", table, headers={"Prefer": "return=representation"}, params=params, json=data
         )
-        if response.status_code >= 400:
-            raise SupabaseError(f"UPDATE {table} failed ({response.status_code}): {response.text}")
         return response.json()
 
     def delete(self, table: str, params: dict) -> list[dict]:
         """DELETE matching rows. params must include a filter, e.g. {'id': 'eq.123'}."""
-        headers = {**self._headers, "Prefer": "return=representation"}
-        response = httpx.delete(
-            f"{self.base_url}/{table}", headers=headers, params=params, timeout=15
+        response = self._request(
+            "DELETE", table, headers={"Prefer": "return=representation"}, params=params
         )
-        if response.status_code >= 400:
-            raise SupabaseError(f"DELETE {table} failed ({response.status_code}): {response.text}")
         return response.json()
