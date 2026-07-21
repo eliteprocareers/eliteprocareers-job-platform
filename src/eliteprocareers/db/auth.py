@@ -38,3 +38,26 @@ def sign_in(email: str, password: str) -> dict:
         raise AuthError(f"Sign-in failed ({response.status_code}): {detail}")
 
     return response.json()
+
+
+def get_user(access_token: str) -> dict:
+    """Resolve an access token to the Supabase Auth user it belongs to.
+
+    Used by the API layer to turn an incoming `Authorization: Bearer <jwt>`
+    header into a concrete user_id before constructing a user-scoped
+    SupabaseClient for that request -- never trust a user_id supplied by
+    the client itself; always derive it from the token via this call.
+    """
+    url = f"{settings.supabase_url}/auth/v1/user"
+    response = httpx.get(
+        url,
+        headers={
+            "apikey": settings.supabase_anon_key,
+            "Authorization": f"Bearer {access_token}",
+        },
+        timeout=15,
+    )
+    if response.status_code != 200:
+        detail = response.json().get("msg", response.text)
+        raise AuthError(f"Token validation failed ({response.status_code}): {detail}")
+    return response.json()
