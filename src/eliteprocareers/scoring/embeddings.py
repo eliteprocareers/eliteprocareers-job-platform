@@ -65,6 +65,51 @@ def build_experience_text(profile: FullProfile) -> str:
 _MAX_JOB_DESCRIPTION_CHARS = 800
 
 
+# Markers that typically start the role-specific portion of a Greenhouse
+# (or similar ATS) job description, after a generic company-boilerplate
+# intro. v15 diagnostic session: confirmed live that 13/15 sampled
+# Greenhouse companies front-load 800-3000+ chars of "About Us"/mission
+# copy before any role content, and _MAX_JOB_DESCRIPTION_CHARS=800 was
+# truncating every one of them inside that intro -- meaning the PM/SaaS
+# canary problem (and general company-clustering in match results) was
+# substantially a truncation bug, not purely a title/keyword/embedding
+# problem as approaches #1-#5 all assumed. See handover v16.
+_ROLE_CONTENT_MARKERS = [
+    "about the role", "responsibilities", "what you'll do", "what you will do",
+    "what you", "who you are", "requirements", "qualifications",
+]
+# v15/v16 note: "the role" and "the team" were tried and dropped -- both
+# are short/generic enough to match mid-sentence inside ordinary intro
+# boilerplate (e.g. Cloudflare's "...shared across the team to lift
+# everyone up"), causing a false-early skip that left boilerplate debris
+# in the retained text. Confirmed live against the same 5 diagnostic jobs
+# before landing on this list.
+
+# Minimum character offset a marker must appear at before we treat it as
+# "skip everything before this" -- avoids discarding a short, already-
+# relevant opening on the rare job that leads with role content.
+_MIN_INTRO_SKIP_CHARS = 150
+
+
+def _skip_intro_boilerplate(text: str) -> str:
+    """Slice off a leading company-boilerplate block, if detected.
+
+    No-op (returns text unchanged) if no marker is found -- this is the
+    fallback path for companies like Airbnb/Squarespace that didn't match
+    any tested marker in the v15 diagnostic sample. Not a regression for
+    those: behavior is identical to pre-fix.
+    """
+    lowered = text.lower()
+    earliest = None
+    for marker in _ROLE_CONTENT_MARKERS:
+        idx = lowered.find(marker)
+        if idx != -1 and (earliest is None or idx < earliest):
+            earliest = idx
+    if earliest is not None and earliest >= _MIN_INTRO_SKIP_CHARS:
+        return text[earliest:]
+    return text
+
+
 def build_job_text(title: str, company: str, description: str | None) -> str:
     """Flatten a job posting into text suitable for embedding.
 
@@ -78,8 +123,16 @@ def build_job_text(title: str, company: str, description: str | None) -> str:
     raw HTML was going straight into every job's scoring embedding).
     The actual fix for the canary is industry_mismatch_penalty() below,
     which uses structured taxonomy data instead of embedding text at all.
+
+    v15/v16 note: HTML-cleaning alone wasn't enough -- the 800-char cap
+    was truncating nearly every Greenhouse job inside its company-mission
+    intro before reaching any role content. _skip_intro_boilerplate() now
+    runs before the cap so the retained text is actually role-specific.
     """
-    clean_description = clean_html_text(description, max_chars=_MAX_JOB_DESCRIPTION_CHARS)
+    clean_description = clean_html_text(description, max_chars=None)
+    clean_description = _skip_intro_boilerplate(clean_description)
+    if len(clean_description) > _MAX_JOB_DESCRIPTION_CHARS:
+        clean_description = clean_description[:_MAX_JOB_DESCRIPTION_CHARS].rsplit(" ", 1)[0] + "..."
     return f"{title} at {company}. {clean_description}".strip()
 
 
