@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """
-Diagnostic-only: title-reinforcement experiment (approach #7 candidate).
-Does NOT write to user_job_matches -- ranks are computed in-memory only.
-Uncommitted by design; formalize into embeddings.py only after review.
+SUPERSEDED (v17/v18): this diagnostic produced the numbers behind approach
+#7 (title-reinforcement), which has since been ACCEPTED and formalized
+directly into build_job_text() in scoring/embeddings.py -- see that
+function's docstring for the full decision, tradeoffs, and the specific
+noise regression (Sales Ops Manager, Cloudflare: rank 58 -> 7/348) that
+was knowingly accepted.
+
+Kept here, unchanged, as a live re-verification tool: since
+reinforced_job_text() below now duplicates what build_job_text() already
+does internally, this script's own reinforcement step is redundant against
+current code (double-reinforcement), but it remains useful for re-running
+the original 4-job comparison against a *future* build_job_text() change,
+to check whether a later fix regresses this decision. Does NOT write to
+user_job_matches -- ranks are computed in-memory only.
 """
 import sys
 from uuid import UUID
@@ -30,8 +41,9 @@ REFERENCE_JOB_IDS = {
 
 
 def reinforced_job_text(job) -> str:
-    base = build_job_text(job.title, job.company, job.description)
-    return f"{base} {job.title}."
+    # build_job_text() now reinforces the title internally (approach #7,
+    # accepted v17/v18) -- no extra repetition needed here anymore.
+    return build_job_text(job.title, job.company, job.description)
 
 
 def main() -> int:
