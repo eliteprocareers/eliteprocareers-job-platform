@@ -21,12 +21,36 @@ class TrackRepository:
         track_name: str,
         target_roles: list[str] | None = None,
         scoring_weights: dict[str, float] | None = None,
+        preferred_locations: list[str] | None = None,
+        preferred_countries: list[str] | None = None,
+        employment_types: list[str] | None = None,
+        seniority_levels: list[str] | None = None,
+        industries: list[str] | None = None,
+        work_mode: list[str] | None = None,
+        willing_to_relocate: bool = False,
+        visa_sponsorship_required: bool | None = None,
+        work_authorization_status: str | None = None,
+        salary_expectation_min: float | None = None,
+        salary_expectation_max: float | None = None,
+        salary_currency: str | None = None,
     ) -> CVTrack:
         payload = {
             "user_id": str(user_id),
             "track_name": track_name,
             "target_roles": target_roles or [],
             "scoring_weights": scoring_weights or {},
+            "preferred_locations": preferred_locations or [],
+            "preferred_countries": preferred_countries or [],
+            "employment_types": employment_types or [],
+            "seniority_levels": seniority_levels or [],
+            "industries": industries or [],
+            "work_mode": work_mode or [],
+            "willing_to_relocate": willing_to_relocate,
+            "visa_sponsorship_required": visa_sponsorship_required,
+            "work_authorization_status": work_authorization_status,
+            "salary_expectation_min": salary_expectation_min,
+            "salary_expectation_max": salary_expectation_max,
+            "salary_currency": salary_currency,
         }
         rows = self.db.insert(self.TABLE, payload)
         return CVTrack.model_validate(rows[0])
@@ -52,5 +76,20 @@ class TrackRepository:
             self.TABLE,
             data={"scoring_weights": scoring_weights},
             params={"id": f"eq.{track_id}"},
+        )
+        return CVTrack.model_validate(rows[0])
+
+    def update_track(self, track_id: UUID, **fields) -> CVTrack:
+        """Partial update of arbitrary track fields (track_name, target_roles,
+        preferences, salary expectations, etc.) -- unlike
+        update_scoring_weights, this accepts any subset of CVTrack's mutable
+        fields. Caller (the API router) is responsible for excluding unset
+        fields via payload.model_dump(exclude_unset=True) so an omitted
+        field isn't overwritten with a default.
+        """
+        if not fields:
+            raise ValueError("update_track called with no fields to update.")
+        rows = self.db.update(
+            self.TABLE, data=fields, params={"id": f"eq.{track_id}"}
         )
         return CVTrack.model_validate(rows[0])

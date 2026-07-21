@@ -7,7 +7,7 @@ only for shapes specific to the HTTP layer itself.
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
@@ -42,3 +42,60 @@ class MatchWithJob(BaseModel):
     job_company: str
     job_url: str | None
     job_location: str | None
+
+
+class CreateTrackRequest(BaseModel):
+    """Body for POST /tracks. user_id is deliberately absent -- it's
+    always taken from the authenticated token, never the request body.
+    """
+    track_name: str
+    target_roles: list[str] = Field(default_factory=list)
+    scoring_weights: dict[str, float] = Field(default_factory=dict)
+    preferred_locations: list[str] = Field(default_factory=list)
+    preferred_countries: list[str] = Field(default_factory=list)
+    employment_types: list[str] = Field(default_factory=list)
+    seniority_levels: list[str] = Field(default_factory=list)
+    industries: list[str] = Field(default_factory=list)
+    work_mode: list[str] = Field(default_factory=list)
+    willing_to_relocate: bool = False
+    visa_sponsorship_required: bool | None = None
+    work_authorization_status: str | None = None
+    salary_expectation_min: float | None = None
+    salary_expectation_max: float | None = None
+    salary_currency: str | None = None
+
+
+class UpdateTrackRequest(BaseModel):
+    """Body for PUT /tracks/{track_id}. Every field is optional and has
+    no default -- the router uses model_dump(exclude_unset=True) so an
+    omitted field is left untouched in the DB, not overwritten with []
+    or None.
+    """
+    track_name: str | None = None
+    target_roles: list[str] | None = None
+    scoring_weights: dict[str, float] | None = None
+    preferred_locations: list[str] | None = None
+    preferred_countries: list[str] | None = None
+    employment_types: list[str] | None = None
+    seniority_levels: list[str] | None = None
+    industries: list[str] | None = None
+    work_mode: list[str] | None = None
+    willing_to_relocate: bool | None = None
+    visa_sponsorship_required: bool | None = None
+    work_authorization_status: str | None = None
+    salary_expectation_min: float | None = None
+    salary_expectation_max: float | None = None
+    salary_currency: str | None = None
+
+
+class MatchTriggerResponse(BaseModel):
+    """Response for POST /tracks/{track_id}/match. The actual matching
+    run happens in the background (BackgroundTasks) -- this just
+    acknowledges it started. There's no status-polling endpoint yet;
+    GET /tracks/{track_id}/matches is the source of truth for whether
+    new scores have landed.
+    """
+    track_id: UUID
+    track_name: str
+    status: str = "started"
+    message: str
