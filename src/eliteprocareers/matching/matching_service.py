@@ -32,8 +32,8 @@ from eliteprocareers.matching.repository import UserJobMatchRepository
 from eliteprocareers.profiles.repository import ProfileRepository
 from eliteprocareers.profiles.track_repository import TrackRepository
 from eliteprocareers.scoring.embeddings import (
-    build_job_description_text,
-    build_job_title_text,
+    build_job_text,
+    compute_industry_mismatch_penalty,
     compute_match_score,
 )
 
@@ -123,11 +123,9 @@ def run_matching_for_track(
             continue
 
         stage1_passed += 1
-        job_title_text = build_job_title_text(job.title, job.company)
-        job_description_text = build_job_description_text(job.description)
-        score = compute_match_score(
-            full_profile, track, job_title_text, job_description_text
-        )
+        job_text = build_job_text(job.title, job.company, job.description)
+        score = compute_match_score(full_profile, track, job_text)
+        score *= compute_industry_mismatch_penalty(track, job)
 
         match_repo.upsert_match(
             user_id=user_id,

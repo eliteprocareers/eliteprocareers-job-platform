@@ -65,67 +65,91 @@ def build_experience_text(profile: FullProfile) -> str:
 _MAX_JOB_DESCRIPTION_CHARS = 800
 
 
-def build_job_title_text(title: str, company: str) -> str:
-    """Short, low-noise text for the job's title + company."""
-    return f"{title} at {company}".strip()
-
-
-def build_job_description_text(description: str | None) -> str:
-    """Cleaned, capped text for the job's description body.
-
-    HTML-stripped via the shared clean_html_text() helper (previously
-    only applied to rationale prompts, not scoring -- v13 finding: raw
-    HTML markup was going into the embedding for every job, adding noise
-    on top of the discrimination issue below). The char cap is NOT the
-    fix by itself -- all-MiniLM-L6-v2 truncates at ~256 tokens regardless,
-    so this alone doesn't guarantee removing any specific passage. It's
-    kept to strip boilerplate/EEO tail text and keep encode() calls cheap.
-    The real fix is job_title_weight below.
-    """
-    return clean_html_text(description, max_chars=_MAX_JOB_DESCRIPTION_CHARS)
-
-
 def build_job_text(title: str, company: str, description: str | None) -> str:
     """Flatten a job posting into text suitable for embedding.
 
-    Kept for backward compatibility / callers that want a single blob
-    (e.g. debugging, logging). Matching itself should use
-    build_job_title_text() + build_job_description_text() separately via
-    compute_match_score()'s job_title_weight, not this function -- see
-    v13 handover for why (concatenated text let long descriptions
-    dominate the job embedding regardless of relevance).
+    v14 note: an earlier version of this session split title/description
+    into separately-weighted embeddings (job_title_weight). REVERTED --
+    live-verified to make the PM/SaaS canary problem worse (0.5677 ->
+    0.7098), not better, because the job's *title* ("Assistant Manager -
+    Product Development") carries the same generic "product" collision as
+    the description, so upweighting title made it worse. Back to a single
+    blob, but now HTML-cleaned (previously only rationale prompts were --
+    raw HTML was going straight into every job's scoring embedding).
+    The actual fix for the canary is industry_mismatch_penalty() below,
+    which uses structured taxonomy data instead of embedding text at all.
     """
-    return f"{title} at {company}. {description or ''}".strip()
+    clean_description = clean_html_text(description, max_chars=_MAX_JOB_DESCRIPTION_CHARS)
+    return f"{title} at {company}. {clean_description}".strip()
+
+
+# Multiplicative penalty applied (post-hoc, not inside the embedding) when
+# a job's structured industry tags partially overlap the track's selected
+# industries but also include at least one tag the track didn't select.
+# v14: root-cause fix for the PM/SaaS canary (NCBA Group, "Assistant
+# Manager - Product Development") -- it passes Stage-1's industry check
+# because MyJobMag tags it both "Banking & Insurance" AND "Product &
+# Project Management" (track selected the latter, not the former), and
+# Stage-1's ANY-overlap logic is deliberately permissive (see
+# filtering.check_industry docstring) so it isn't meant to catch this.
+# This operates on structured taxonomy data, not lexical/embedding
+# similarity -- unlike all 4 prior PM/SaaS attempts (v10-v14), which all
+# tried to fix this via text/embedding tuning and were ruled out or
+# reverted. No-op (returns 1.0) whenever a job has no industry data at
+# all (e.g. every current Greenhouse job) -- doesn't touch or risk
+# regressing jobs the embedding-only path already scores reasonably.
+_INDUSTRY_MISMATCH_PENALTY = 0.3
+
+
+def compute_industry_mismatch_penalty(track: CVTrack, job) -> float:
+    """Returns a multiplier in (0, 1] for job.attributes['industry'] tags
+    that fall outside track.industries. 1.0 (no penalty) when there's no
+    structured industry data on either side, or every job industry tag is
+    already within track.industries -- only penalizes the specific
+    "partially overlaps but also carries an unselected industry" case
+    that lets jobs like the NCBA canary through Stage-1's intentionally
+    permissive ANY-overlap check.
+
+    UNVERIFIED against live data as of this commit's numeric value
+    (0.3) -- run the updated verification script before treating this
+    weight as final; the mechanism (which jobs get penalized at all) was
+    confirmed live via direct Supabase query this session, but the
+    specific 0.3 multiplier is a starting guess, not tuned.
+    """
+    if not track.industries:
+        return 1.0
+    job_industry = getattr(job, "attributes", {}).get("industry")
+    if not job_industry:
+        return 1.0
+    job_industries = job_industry if isinstance(job_industry, list) else [job_industry]
+    mismatched = [i for i in job_industries if i not in track.industries]
+    if not mismatched:
+        return 1.0
+    return _INDUSTRY_MISMATCH_PENALTY
 
 
 def compute_match_score(
     profile: FullProfile,
     track: CVTrack,
-    job_title_text: str,
-    job_description_text: str,
+    job_text: str,
     role_weight: float = 0.7,
-    job_title_weight: float = 0.6,
 ) -> float:
     """Weighted cosine similarity between a candidate (profile + track) and a job.
 
-    Both sides of the comparison use the same pattern: embed sub-parts
-    separately, then combine as a weighted average, rather than
-    concatenating everything into one blob. Text repetition (a long work
-    history, or a long job description) otherwise silently dominates a
-    single combined embedding regardless of relevance.
+    Role text and experience text are embedded separately, then combined
+    as a weighted average before comparing to the job. This gives target
+    roles real, controllable influence instead of relying on text
+    repetition, which gets diluted once work history text is long.
 
-    - role_weight (candidate side, unchanged since v9): target roles vs.
-      general skills/experience. Default 0.7 favors target roles.
-    - job_title_weight (NEW v13): job title+company vs. job description.
-      Default 0.6 favors the title. v13 finding: a verbose job
-      description can be saturated with generic role-adjacent vocabulary
-      (e.g. an insurance "product development" posting reusing "product
-      management/governance" language) that inflates similarity against
-      an unrelated track's target roles, independent of the job's actual
-      title or domain. This was misdiagnosed across 3 earlier sessions
-      (v10-v12) as a title problem. UNVERIFIED against the live
-      model/data as of this commit -- run the verification script in the
-      v13 handover before trusting this weight or merging to main.
+    role_weight controls how much target roles dominate vs. general
+    skills/experience. Default 0.7 favors target roles, since which
+    track a candidate is applying under should matter more than raw
+    experience overlap.
+
+    Does NOT apply compute_industry_mismatch_penalty() -- that's a
+    separate, structured-data-based adjustment applied by the caller
+    (matching_service.py) after this function returns, not part of the
+    embedding similarity itself.
     """
     model = _get_model()
 
@@ -134,22 +158,13 @@ def compute_match_score(
 
     role_emb = model.encode(role_text, convert_to_tensor=True)
     experience_emb = model.encode(experience_text, convert_to_tensor=True)
-    job_title_emb = model.encode(job_title_text, convert_to_tensor=True)
-    job_description_emb = model.encode(job_description_text, convert_to_tensor=True)
+    job_emb = model.encode(job_text, convert_to_tensor=True)
 
     role_emb = torch.nn.functional.normalize(role_emb, dim=0)
     experience_emb = torch.nn.functional.normalize(experience_emb, dim=0)
-    job_title_emb = torch.nn.functional.normalize(job_title_emb, dim=0)
-    job_description_emb = torch.nn.functional.normalize(job_description_emb, dim=0)
 
     combined_emb = role_weight * role_emb + (1 - role_weight) * experience_emb
     combined_emb = torch.nn.functional.normalize(combined_emb, dim=0)
 
-    combined_job_emb = (
-        job_title_weight * job_title_emb
-        + (1 - job_title_weight) * job_description_emb
-    )
-    combined_job_emb = torch.nn.functional.normalize(combined_job_emb, dim=0)
-
-    similarity = util.cos_sim(combined_emb, combined_job_emb).item()
+    similarity = util.cos_sim(combined_emb, job_emb).item()
     return max(0.0, similarity)

@@ -1,19 +1,37 @@
 """
-v13 fix verification script. Paste-and-run as-is (no placeholders).
-Run on the fix/pm-saas-job-title-weight branch, inside the venv.
+v14 fix verification script, approach #5. Paste-and-run as-is, no
+placeholders. Run on the fix/pm-saas-job-title-weight branch (same
+branch, superseded commit -- approach #4/job_title_weight was reverted
+after live-verify showed it made the canary WORSE: 0.5677 -> 0.7098).
 
-Baselines (current live scores, pulled via Supabase this session):
+Baselines (ORIGINAL live scores, i.e. before any v14 change, pulled via
+Supabase this session):
   Canary (false positive, insurance):
     "Assistant Manager – Product Development" @ NCBA Group -> 0.5677
+    industry tags: ["Banking & Insurance", "Product & Project Management"]
   True positives (real SaaS PM roles, currently under-scoring):
     "Senior Product Manager - Ad Fraud and Identity Solutions" @ Cloudflare -> 0.2800
     "Senior Product Manager - Enterprise (API & SDK)" @ Cloudflare        -> 0.2738
     "Senior Product Manager - FinTech" @ Cloudflare                       -> 0.2401
+  (Cloudflare jobs have industry=null -- Greenhouse doesn't populate that
+  field -- so compute_industry_mismatch_penalty() is a no-op for them by
+  design; they should be unaffected by this fix, not just "still positive".)
 
-Expected direction after the fix: canary score DROPS, Cloudflare PM
-scores RISE (or at minimum don't drop). If canary doesn't drop, or the
-Cloudflare scores drop further, the fix doesn't work -- report back the
-numbers rather than merging.
+PM/SaaS track industries: ["Product & Project Management", "Software & Data"]
+
+Approach #5: instead of tuning embedding text/weights (4 attempts,
+v10-v14, all ruled out or reverted), penalize the score post-hoc when a
+job's structured industry tags include one the track didn't select. The
+NCBA job's "Banking & Insurance" tag isn't in the track's industries;
+its "Product & Project Management" tag is (which is why it passes
+Stage-1's intentionally-permissive ANY-overlap check) -- the mismatch
+penalty targets exactly that gap using clean taxonomy data, not text.
+
+Expected direction: canary score DROPS sharply (embedding score x 0.3).
+Cloudflare scores UNCHANGED (no industry data to penalize). If the
+canary doesn't drop as expected, or Cloudflare scores change at all,
+report back before merging -- the mechanism may not be reading
+job.attributes as expected.
 """
 
 from uuid import UUID
@@ -23,8 +41,8 @@ from eliteprocareers.jobs.repository import JobRepository
 from eliteprocareers.profiles.repository import ProfileRepository
 from eliteprocareers.profiles.track_repository import TrackRepository
 from eliteprocareers.scoring.embeddings import (
-    build_job_description_text,
-    build_job_title_text,
+    build_job_text,
+    compute_industry_mismatch_penalty,
     compute_match_score,
 )
 
@@ -61,21 +79,25 @@ track = track_repo.get_track(PM_SAAS_TRACK_ID)
 job_ids = [v[0] for v in JOB_IDS.values()]
 jobs_by_id = {j.id: j for j in job_repo.get_jobs_by_ids(job_ids)}
 
-print(f"{'Job':55s} {'baseline':>10s} {'new':>10s} {'delta':>10s}")
-print("-" * 90)
+print(f"{'Job':55s} {'baseline':>10s} {'raw_new':>10s} {'penalty':>8s} {'final':>10s} {'delta':>10s}")
+print("-" * 108)
 for label, (job_id, baseline) in JOB_IDS.items():
     job = jobs_by_id.get(job_id)
     if job is None:
         print(f"{label:55s}  NOT FOUND (job_id={job_id})")
         continue
-    job_title_text = build_job_title_text(job.title, job.company)
-    job_description_text = build_job_description_text(job.description)
-    new_score = compute_match_score(
-        full_profile, track, job_title_text, job_description_text
+    job_text = build_job_text(job.title, job.company, job.description)
+    raw_score = compute_match_score(full_profile, track, job_text)
+    penalty = compute_industry_mismatch_penalty(track, job)
+    final_score = raw_score * penalty
+    delta = final_score - baseline
+    print(
+        f"{label:55s} {baseline:10.4f} {raw_score:10.4f} {penalty:8.2f} "
+        f"{final_score:10.4f} {delta:+10.4f}"
     )
-    delta = new_score - baseline
-    print(f"{label:55s} {baseline:10.4f} {new_score:10.4f} {delta:+10.4f}")
 
 print()
-print("Expect: CANARY delta negative, Cloudflare PM deltas positive (or >= 0).")
+print("Expect: CANARY delta strongly negative (penalty=0.3 applied).")
+print("Expect: Cloudflare deltas near zero (penalty=1.0, no industry data).")
 print("If not, report these numbers back before merging.")
+
