@@ -57,15 +57,22 @@ class UserJobMatchRepository:
         (user, job, track) triple was already scored -- re-scoring
         should overwrite, not duplicate (DB has a unique constraint on
         this triple that would otherwise reject a second insert).
+
+        On update, ai_rationale is only written when the caller passes
+        one explicitly. Without this guard, re-running matching_service's
+        run_matching_for_track() (which never passes ai_rationale) would
+        silently null out every rationale backfill_match_rationales.py
+        had written -- caught live 2026-07-20 before it happened, while
+        about to re-score the Product Management/SaaS track after
+        widening its target_roles, right after finishing a full
+        rationale backfill for that same track.
         """
         existing = self.get_match(user_id, job_id, cv_track_id)
 
-        payload = {
-            "match_score": match_score,
-            "ai_rationale": ai_rationale,
-        }
-
         if existing is not None:
+            payload: dict = {"match_score": match_score}
+            if ai_rationale is not None:
+                payload["ai_rationale"] = ai_rationale
             rows = self.db.update(
                 self.TABLE,
                 payload,
@@ -77,7 +84,8 @@ class UserJobMatchRepository:
             "user_id": str(user_id),
             "job_id": str(job_id),
             "cv_track_id": str(cv_track_id),
-            **payload,
+            "match_score": match_score,
+            "ai_rationale": ai_rationale,
         }
         rows = self.db.insert(self.TABLE, payload)
         return UserJobMatch.model_validate(rows[0])

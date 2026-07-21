@@ -18,12 +18,14 @@ which costs 697 Groq calls in whichever mode you choose since the LLM
 call itself is what needs checking, not just the write).
 
 Usage:
-    python3 scripts/backfill_match_rationales.py                # dry run, all rows
-    python3 scripts/backfill_match_rationales.py --limit 5       # dry run, first 5
-    python3 scripts/backfill_match_rationales.py --apply         # writes for real
+    python3 scripts/backfill_match_rationales.py                       # dry run, score >= 0.3
+    python3 scripts/backfill_match_rationales.py --limit 5              # dry run, first 5
+    python3 scripts/backfill_match_rationales.py --apply                # writes for real
     python3 scripts/backfill_match_rationales.py --apply --limit 50
+    python3 scripts/backfill_match_rationales.py --apply --min-score 0.25
 """
 import sys
+import time
 from uuid import UUID
 
 from eliteprocareers.db.client import SupabaseClient
@@ -33,6 +35,24 @@ from eliteprocareers.jobs.repository import JobRepository
 from eliteprocareers.matching.repository import UserJobMatchRepository
 from eliteprocareers.profiles.repository import ProfileRepository
 from eliteprocareers.profiles.track_repository import TrackRepository
+
+# match_rationale.py uses GROQ_MODEL_FAST (llama-3.1-8b-instant) for its
+# 500,000 token/day free-tier budget (vs 100,000 for the default 70b model
+# -- confirmed live 2026-07-20 after hitting that cap mid-backfill). But
+# the fast model's per-minute cap is *lower* -- 6,000 TPM vs 70b's 12,000 --
+# so pacing has to be more conservative here despite the bigger daily
+# budget. At ~2,600-4,700 tokens/call, 35s of spacing keeps every call
+# safely inside its own 6,000-token minute rather than assuming the 14s
+# pacing tuned for the other model still applies.
+SECONDS_BETWEEN_CALLS = 35
+
+# Default cutoff for which matches get a rationale at all. Live score
+# distribution confirmed 2026-07-20: avg match_score is ~0.15-0.19 across
+# both tracks (max 0.55 / 0.67) -- most of the 697 rows are noise a
+# rationale wouldn't make more useful. score >= 0.3 keeps the top ~15%
+# per track (107 of 697 total), which is both the actually-useful set
+# for James to read and small enough to finish today on the free tier.
+DEFAULT_MIN_SCORE = 0.3
 
 # Same hardcoded scope as cleanup_stale_matches.py -- James's 2 real
 # tracks, the only ones with any match rows today. Not read from a
@@ -54,10 +74,22 @@ def _parse_limit(argv: list[str]) -> int | None:
         raise SystemExit("--limit requires an integer argument, e.g. --limit 50")
 
 
+def _parse_min_score(argv: list[str]) -> float:
+    if "--min-score" not in argv:
+        return DEFAULT_MIN_SCORE
+    idx = argv.index("--min-score")
+    try:
+        return float(argv[idx + 1])
+    except (IndexError, ValueError):
+        raise SystemExit("--min-score requires a number, e.g. --min-score 0.25")
+
+
 def main() -> int:
     argv = sys.argv[1:]
     apply = "--apply" in argv
     limit = _parse_limit(argv)
+    min_score = _parse_min_score(argv)
+    print(f"Only processing matches with score >= {min_score}\n")
 
     db = SupabaseClient(use_service_role=True)
     profile_repo = ProfileRepository(db)
@@ -88,9 +120,9 @@ def main() -> int:
             print(f"  SKIP: no cv_tracks row for track_id={track_id}")
             continue
 
-        matches = match_repo.list_matches_for_track(track_id)
+        matches = match_repo.list_matches_for_track(track_id, min_score=min_score)
         missing = [m for m in matches if not m.ai_rationale]
-        print(f"{track.track_name}: {len(matches)} matches, {len(missing)} missing rationale")
+        print(f"{track.track_name}: {len(matches)} matches >= {min_score}, {len(missing)} missing rationale")
 
         for match in missing:
             if limit is not None and total_processed >= limit:
@@ -104,6 +136,10 @@ def main() -> int:
                 continue
 
             total_processed += 1
+            if total_processed > 1:
+                print(f"  ...waiting {SECONDS_BETWEEN_CALLS}s (rate limit pacing)", flush=True)
+                time.sleep(SECONDS_BETWEEN_CALLS)
+            print(f"  ...calling Groq for match {total_processed} ({job.title} @ {job.company})", flush=True)
             try:
                 rationale = generate_match_rationale(
                     full_profile, track, job, match.match_score or 0.0

@@ -3,7 +3,7 @@
 Uses a local sentence-transformers model — no API calls, no cost, fast
 enough to run per-track per-job. This module only computes a raw similarity
 score; it does not write to the database and does not generate rationale
-text (that's a separate module using Gemini).
+text (that's generation/match_rationale.py, using Groq).
 """
 import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")

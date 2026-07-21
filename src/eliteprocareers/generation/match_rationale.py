@@ -16,9 +16,38 @@ database itself -- callers own the write, same separation scoring/embeddings.py
 already uses (it computes, it doesn't persist).
 """
 
-from eliteprocareers.generation.llm_client import generate_text
+import html
+import re
+
+from eliteprocareers.generation.llm_client import GROQ_MODEL_FAST, generate_text
 from eliteprocareers.jobs.models import Job
 from eliteprocareers.profiles.models import CVTrack, FullProfile
+
+# Cap applied to job.description before it goes in the prompt. Confirmed
+# live 2026-07-20: a real posting (Asana "People Partner, APJ") stored
+# 17,577 chars of raw HTML-entity-escaped markup as its description --
+# ~4,000+ tokens on its own, reliably blowing the fast model's 6,000 TPM
+# cap on every retry regardless of pacing. Descriptions this long add
+# nothing a 2-3 sentence rationale needs anyway; the opening paragraphs
+# carry the substance, everything past this is boilerplate/benefits/EEO text.
+_MAX_DESCRIPTION_CHARS = 1200
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean_description(raw: str | None) -> str:
+    """Strips HTML tags/entities and truncates. ATS platforms (Greenhouse
+    in particular) store descriptions as raw escaped HTML, not plain text
+    -- passing that straight into a prompt wastes tokens on markup the
+    model gets zero signal from.
+    """
+    if not raw:
+        return "Not provided"
+    text = html.unescape(raw)
+    text = _HTML_TAG_RE.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > _MAX_DESCRIPTION_CHARS:
+        text = text[:_MAX_DESCRIPTION_CHARS].rsplit(" ", 1)[0] + "..."
+    return text or "Not provided"
 
 
 def build_rationale_prompt(
@@ -50,7 +79,7 @@ JOB POSTING:
 Title: {job.title}
 Company: {job.company}
 Location: {job.location or "Not specified"}
-Description: {job.description or "Not provided"}
+Description: {_clean_description(job.description)}
 
 MODEL MATCH SCORE (0-1, embedding-based semantic similarity, already
 computed -- do not restate it as a percentage or invent your own number):
@@ -79,10 +108,18 @@ def generate_match_rationale(
 ) -> str:
     """Full pipeline: build prompt -> call LLM -> return plain rationale text.
 
+    Uses GROQ_MODEL_FAST (llama-3.1-8b-instant) rather than the default
+    GROQ_MODEL -- 500,000 tokens/day free-tier budget vs 100,000 (confirmed
+    live 2026-07-20), and a 2-3 sentence rationale grounded in facts already
+    laid out explicitly in the prompt doesn't need 70b-level reasoning to
+    get right. Screening answers and cover letters stay on GROQ_MODEL since
+    that quality/quota tradeoff is different for longer, more consequential
+    generated text.
+
     Raises generation.llm_client.LLMError on API failure -- callers (e.g.
     a backfill script processing hundreds of matches) should catch this
     per-row so one bad Groq response doesn't abort an entire run.
     """
     prompt = build_rationale_prompt(profile, track, job, match_score)
-    raw_response = generate_text(prompt, temperature=0.5)
+    raw_response = generate_text(prompt, temperature=0.5, model=GROQ_MODEL_FAST)
     return raw_response.strip()
