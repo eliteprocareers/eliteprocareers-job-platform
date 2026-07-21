@@ -14,6 +14,7 @@ import torch
 from sentence_transformers import SentenceTransformer, util
 
 from eliteprocareers.profiles.models import CVTrack, FullProfile
+from eliteprocareers.text_utils import clean_html_text
 
 _MODEL_NAME = "all-MiniLM-L6-v2"
 
@@ -61,9 +62,70 @@ def build_experience_text(profile: FullProfile) -> str:
     return " | ".join(p for p in parts if p)
 
 
+_MAX_JOB_DESCRIPTION_CHARS = 800
+
+
 def build_job_text(title: str, company: str, description: str | None) -> str:
-    """Flatten a job posting into text suitable for embedding."""
-    return f"{title} at {company}. {description or ''}".strip()
+    """Flatten a job posting into text suitable for embedding.
+
+    v14 note: an earlier version of this session split title/description
+    into separately-weighted embeddings (job_title_weight). REVERTED --
+    live-verified to make the PM/SaaS canary problem worse (0.5677 ->
+    0.7098), not better, because the job's *title* ("Assistant Manager -
+    Product Development") carries the same generic "product" collision as
+    the description, so upweighting title made it worse. Back to a single
+    blob, but now HTML-cleaned (previously only rationale prompts were --
+    raw HTML was going straight into every job's scoring embedding).
+    The actual fix for the canary is industry_mismatch_penalty() below,
+    which uses structured taxonomy data instead of embedding text at all.
+    """
+    clean_description = clean_html_text(description, max_chars=_MAX_JOB_DESCRIPTION_CHARS)
+    return f"{title} at {company}. {clean_description}".strip()
+
+
+# Multiplicative penalty applied (post-hoc, not inside the embedding) when
+# a job's structured industry tags partially overlap the track's selected
+# industries but also include at least one tag the track didn't select.
+# v14: root-cause fix for the PM/SaaS canary (NCBA Group, "Assistant
+# Manager - Product Development") -- it passes Stage-1's industry check
+# because MyJobMag tags it both "Banking & Insurance" AND "Product &
+# Project Management" (track selected the latter, not the former), and
+# Stage-1's ANY-overlap logic is deliberately permissive (see
+# filtering.check_industry docstring) so it isn't meant to catch this.
+# This operates on structured taxonomy data, not lexical/embedding
+# similarity -- unlike all 4 prior PM/SaaS attempts (v10-v14), which all
+# tried to fix this via text/embedding tuning and were ruled out or
+# reverted. No-op (returns 1.0) whenever a job has no industry data at
+# all (e.g. every current Greenhouse job) -- doesn't touch or risk
+# regressing jobs the embedding-only path already scores reasonably.
+_INDUSTRY_MISMATCH_PENALTY = 0.3
+
+
+def compute_industry_mismatch_penalty(track: CVTrack, job) -> float:
+    """Returns a multiplier in (0, 1] for job.attributes['industry'] tags
+    that fall outside track.industries. 1.0 (no penalty) when there's no
+    structured industry data on either side, or every job industry tag is
+    already within track.industries -- only penalizes the specific
+    "partially overlaps but also carries an unselected industry" case
+    that lets jobs like the NCBA canary through Stage-1's intentionally
+    permissive ANY-overlap check.
+
+    UNVERIFIED against live data as of this commit's numeric value
+    (0.3) -- run the updated verification script before treating this
+    weight as final; the mechanism (which jobs get penalized at all) was
+    confirmed live via direct Supabase query this session, but the
+    specific 0.3 multiplier is a starting guess, not tuned.
+    """
+    if not track.industries:
+        return 1.0
+    job_industry = getattr(job, "attributes", {}).get("industry")
+    if not job_industry:
+        return 1.0
+    job_industries = job_industry if isinstance(job_industry, list) else [job_industry]
+    mismatched = [i for i in job_industries if i not in track.industries]
+    if not mismatched:
+        return 1.0
+    return _INDUSTRY_MISMATCH_PENALTY
 
 
 def compute_match_score(
@@ -83,6 +145,11 @@ def compute_match_score(
     skills/experience. Default 0.7 favors target roles, since which
     track a candidate is applying under should matter more than raw
     experience overlap.
+
+    Does NOT apply compute_industry_mismatch_penalty() -- that's a
+    separate, structured-data-based adjustment applied by the caller
+    (matching_service.py) after this function returns, not part of the
+    embedding similarity itself.
     """
     model = _get_model()
 

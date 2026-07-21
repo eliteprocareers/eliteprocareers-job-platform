@@ -16,12 +16,10 @@ database itself -- callers own the write, same separation scoring/embeddings.py
 already uses (it computes, it doesn't persist).
 """
 
-import html
-import re
-
 from eliteprocareers.generation.llm_client import GROQ_MODEL_FAST, generate_text
 from eliteprocareers.jobs.models import Job
 from eliteprocareers.profiles.models import CVTrack, FullProfile
+from eliteprocareers.text_utils import clean_html_text
 
 # Cap applied to job.description before it goes in the prompt. Confirmed
 # live 2026-07-20: a real posting (Asana "People Partner, APJ") stored
@@ -31,23 +29,16 @@ from eliteprocareers.profiles.models import CVTrack, FullProfile
 # nothing a 2-3 sentence rationale needs anyway; the opening paragraphs
 # carry the substance, everything past this is boilerplate/benefits/EEO text.
 _MAX_DESCRIPTION_CHARS = 1200
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _clean_description(raw: str | None) -> str:
-    """Strips HTML tags/entities and truncates. ATS platforms (Greenhouse
-    in particular) store descriptions as raw escaped HTML, not plain text
-    -- passing that straight into a prompt wastes tokens on markup the
-    model gets zero signal from.
+    """Strips HTML tags/entities and truncates for prompt use.
+
+    v13: now a thin wrapper around the shared clean_html_text() helper
+    (see text_utils.py) so scoring/embeddings.py can reuse the same
+    HTML-stripping logic. Behavior/output unchanged from v11.
     """
-    if not raw:
-        return "Not provided"
-    text = html.unescape(raw)
-    text = _HTML_TAG_RE.sub(" ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > _MAX_DESCRIPTION_CHARS:
-        text = text[:_MAX_DESCRIPTION_CHARS].rsplit(" ", 1)[0] + "..."
-    return text or "Not provided"
+    return clean_html_text(raw, max_chars=_MAX_DESCRIPTION_CHARS) or "Not provided"
 
 
 def build_rationale_prompt(
