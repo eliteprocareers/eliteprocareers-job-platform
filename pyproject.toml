@@ -27,6 +27,3 @@ where = ["src"]
 
 [tool.vercel]
 entrypoint = "src.eliteprocareers.api.main:app"
-
-[tool.vercel]
-entrypoint = "src.eliteprocareers.api.main:app"
