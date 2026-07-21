@@ -116,3 +116,17 @@ class JobRepository:
             offset += page_size
 
         return all_jobs
+
+    def get_jobs_by_ids(self, job_ids: list) -> list[Job]:
+        """Fetches full Job rows for a specific list of ids -- used by
+        scripts/export_top_matches.py, since UserJobMatch only carries
+        job_id, not the job's title/company/url. PostgREST's `in.()`
+        filter handles an empty list ungracefully (would fetch nothing
+        useful anyway), so short-circuits to [] instead.
+        """
+        if not job_ids:
+            return []
+
+        ids_param = ",".join(str(jid) for jid in job_ids)
+        rows = self.db.select(self.TABLE, params={"select": "*", "id": f"in.({ids_param})"})
+        return [Job.model_validate(row) for row in rows]
