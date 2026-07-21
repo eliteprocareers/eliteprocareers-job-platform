@@ -128,12 +128,34 @@ def build_job_text(title: str, company: str, description: str | None) -> str:
     was truncating nearly every Greenhouse job inside its company-mission
     intro before reaching any role content. _skip_intro_boilerplate() now
     runs before the cap so the retained text is actually role-specific.
+
+    v17/v18 note -- approach #7 (title-reinforcement), ACCEPTED: the
+    title is now repeated once at the end of the blob (see return
+    statement). Live-verified via scripts/experiment_title_reinforcement.py
+    against the 4-job PM/SaaS reference set: PM - FinTech (Cloudflare)
+    improved 0.5766 -> 0.6123 (rank 2/348); PM - Ad Fraud (Cloudflare)
+    partially recovered 0.3474 -> 0.4014 (rank 252 -> 208/348, still well
+    below its pre-approach-#6 baseline of rank 31). This is a deliberate,
+    known tradeoff, not an unnoticed regression: the noise reference job
+    (Sales Ops Manager, Cloudflare) moved from rank 58/348 to rank 7/348
+    under this same change -- i.e. a job that shares no real PM/SaaS
+    substance but does share the generic word "Manager" with the track's
+    target-role text got pulled toward the top. This is the same
+    generic-word-collision mechanism the v14 note above already
+    identified and reverted for once (there, via a different
+    implementation -- a separately-weighted title embedding rather than
+    literal repetition). The difference this time: the decision to accept
+    it was made deliberately, with the noise number in hand, weighing it
+    against the FinTech/Ad Fraud gains, not discovered after the fact.
+    If a future session is chasing renewed noise complaints on the
+    PM/SaaS track, this repetition -- not just industry_mismatch_penalty
+    -- is a live suspect to revisit first.
     """
     clean_description = clean_html_text(description, max_chars=None)
     clean_description = _skip_intro_boilerplate(clean_description)
     if len(clean_description) > _MAX_JOB_DESCRIPTION_CHARS:
         clean_description = clean_description[:_MAX_JOB_DESCRIPTION_CHARS].rsplit(" ", 1)[0] + "..."
-    return f"{title} at {company}. {clean_description}".strip()
+    return f"{title} at {company}. {clean_description} {title}.".strip()
 
 
 # Multiplicative penalty applied (post-hoc, not inside the embedding) when
