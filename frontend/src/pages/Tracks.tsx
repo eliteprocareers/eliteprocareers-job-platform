@@ -30,16 +30,23 @@ export default function Tracks() {
         <h1 className="text-2xl font-semibold text-slate-100">CV Tracks</h1>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-400">{email}</span>
+          <Link to="/tracks/new" className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded px-4 py-2 font-medium">
+            + New Track
+          </Link>
           <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-200">Log out</button>
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {data?.map((track) => (
-          <Link key={track.id} to={`/tracks/${track.id}/matches`}
-            className="block bg-slate-900 hover:bg-slate-800 rounded-lg p-5 transition">
-            <h2 className="text-lg font-medium text-slate-100">{track.track_name}</h2>
-            <p className="text-sm text-slate-400 mt-1">{track.target_roles.join(', ') || 'No target roles set'}</p>
-          </Link>
+          <div key={track.id} className="bg-slate-900 hover:bg-slate-800 rounded-lg p-5 transition">
+            <Link to={`/tracks/${track.id}/matches`} className="block">
+              <h2 className="text-lg font-medium text-slate-100">{track.track_name}</h2>
+              <p className="text-sm text-slate-400 mt-1">{track.target_roles.join(', ') || 'No target roles set'}</p>
+            </Link>
+            <Link to={`/tracks/${track.id}/edit`} className="inline-block text-sm text-indigo-400 hover:text-indigo-300 mt-3">
+              Edit
+            </Link>
+          </div>
         ))}
       </div>
     </div>

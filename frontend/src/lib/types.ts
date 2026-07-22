@@ -33,6 +33,33 @@ export interface CVTrack {
   updated_at?: string;
 }
 
+export interface CreateTrackRequest {
+  track_name: string;
+  target_roles: string[];
+  scoring_weights?: Record<string, number>;
+  preferred_locations: string[];
+  preferred_countries: string[];
+  employment_types: string[];
+  seniority_levels: string[];
+  industries: string[];
+  work_mode: string[];
+  willing_to_relocate: boolean;
+  visa_sponsorship_required: boolean | null;
+  work_authorization_status: string | null;
+  salary_expectation_min: number | null;
+  salary_expectation_max: number | null;
+  salary_currency: string | null;
+}
+
+export type UpdateTrackRequest = Partial<CreateTrackRequest>;
+
+export interface MatchTriggerResponse {
+  track_id: string;
+  track_name: string;
+  status: string;
+  message: string;
+}
+
 export interface MatchWithJob {
   match_id: string;
   job_id: string;
