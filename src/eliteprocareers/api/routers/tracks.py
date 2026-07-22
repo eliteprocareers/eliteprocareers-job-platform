@@ -8,7 +8,9 @@ from eliteprocareers.api.schemas import (
     MatchTriggerResponse,
     UpdateTrackRequest,
 )
-from eliteprocareers.matching.matching_service import run_matching_for_track
+from eliteprocareers.matching.matching_service import run_matching_for_track_tracked
+from eliteprocareers.matching.models import MatchingRun
+from eliteprocareers.matching.repository import MatchingRunRepository
 from eliteprocareers.profiles.models import CVTrack
 from eliteprocareers.profiles.track_repository import TrackRepository
 
@@ -95,19 +97,58 @@ def trigger_matching(
     background and returns immediately (202, not 200) -- a real run
     takes several minutes against ~3000 jobs (see run_matching.py's own
     progress-throttling comment), so running it inline would hang the
-    HTTP request for that whole time. Poll GET /tracks/{track_id}/matches
-    afterward for updated scores.
+    HTTP request for that whole time.
+
+    Creates a matching_runs row synchronously (before returning) so the
+    client always gets a real run_id to poll, then hands the tracked
+    run to BackgroundTasks. Poll GET /tracks/{track_id}/match-status/
+    {run_id} for real completion status -- replaces the earlier
+    client-side timed-poll workaround against .../matches.
     """
     track = _get_owned_track(track_id, current_user)
+    run = MatchingRunRepository(current_user.db).create_run(
+        user_id=current_user.id, cv_track_id=track_id
+    )
     background_tasks.add_task(
-        run_matching_for_track, current_user.id, track_id, current_user.db
+        run_matching_for_track_tracked,
+        current_user.id,
+        track_id,
+        run.id,
+        current_user.db,
     )
     return MatchTriggerResponse(
         track_id=track_id,
         track_name=track.track_name,
+        run_id=run.id,
         status="started",
         message=(
             "Matching run started in the background. "
-            "Poll GET /tracks/{track_id}/matches for updated results."
+            "Poll GET /tracks/{track_id}/match-status/{run_id} "
+            "for real completion status."
         ),
     )
+
+
+@router.get(
+    "/{track_id}/match-status/{run_id}",
+    response_model=MatchingRun,
+)
+def get_match_status(
+    track_id: UUID,
+    run_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> MatchingRun:
+    """Poll endpoint for a matching run's real status -- running,
+    completed, or failed -- with jobs_processed/jobs_total for progress.
+    track_id is verified via _get_owned_track (404 if not owned) even
+    though the run itself already carries user_id, for the same
+    can't-enumerate-other-users'-ids reason as every other track_id path
+    param in this router.
+    """
+    _get_owned_track(track_id, current_user)
+    run = MatchingRunRepository(current_user.db).get_run(run_id)
+    if run is None or run.user_id != current_user.id or run.cv_track_id != track_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Matching run not found."
+        )
+    return run

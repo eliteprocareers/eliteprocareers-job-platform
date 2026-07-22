@@ -91,11 +91,14 @@ class UpdateTrackRequest(BaseModel):
 class MatchTriggerResponse(BaseModel):
     """Response for POST /tracks/{track_id}/match. The actual matching
     run happens in the background (BackgroundTasks) -- this just
-    acknowledges it started. There's no status-polling endpoint yet;
-    GET /tracks/{track_id}/matches is the source of truth for whether
-    new scores have landed.
+    acknowledges it started. run_id can be polled via
+    GET /tracks/{track_id}/match-status/{run_id} for real completion
+    status (see matching/models.py's MatchingRun), replacing the
+    earlier client-side timed-poll workaround against
+    GET /tracks/{track_id}/matches.
     """
     track_id: UUID
     track_name: str
+    run_id: UUID
     status: str = "started"
     message: str

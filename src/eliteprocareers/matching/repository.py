@@ -16,7 +16,9 @@ relying on a PostgREST feature that isn't wired up.
 from uuid import UUID
 
 from eliteprocareers.db.client import SupabaseClient
-from eliteprocareers.matching.models import UserJobMatch
+from datetime import datetime, timezone
+
+from eliteprocareers.matching.models import MatchingRun, UserJobMatch
 
 
 class UserJobMatchRepository:
@@ -146,3 +148,77 @@ class UserJobMatchRepository:
             offset += page_size
 
         return all_matches
+
+
+class MatchingRunRepository:
+    """Tracks status of background matching runs (matching_runs table),
+    for real status-polling via GET /tracks/{id}/match-status/{run_id}.
+
+    Same RLS rule as UserJobMatchRepository: must be constructed with a
+    user-scoped SupabaseClient, not use_service_role=True -- confirmed
+    against migrations/0004_add_matching_runs.sql before writing this.
+    """
+    TABLE = "matching_runs"
+
+    def __init__(self, db: SupabaseClient) -> None:
+        self.db = db
+
+    def create_run(self, user_id: UUID, cv_track_id: UUID) -> MatchingRun:
+        """Called at the start of a matching run, before any jobs are
+        processed -- gives the caller a run_id to return to the client
+        immediately, before jobs_total is even known.
+        """
+        payload = {
+            "user_id": str(user_id),
+            "cv_track_id": str(cv_track_id),
+            "status": "running",
+            "jobs_processed": 0,
+        }
+        rows = self.db.insert(self.TABLE, payload)
+        return MatchingRun.model_validate(rows[0])
+
+    def update_progress(
+        self, run_id: UUID, jobs_processed: int, jobs_total: int
+    ) -> None:
+        """Called from on_progress during the run. Caller is responsible
+        for throttling call frequency -- this does one write per call,
+        with no batching of its own.
+        """
+        self.db.update(
+            self.TABLE,
+            {"jobs_processed": jobs_processed, "jobs_total": jobs_total},
+            params={"id": f"eq.{run_id}"},
+        )
+
+    def mark_completed(self, run_id: UUID) -> None:
+        self.db.update(
+            self.TABLE,
+            {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            params={"id": f"eq.{run_id}"},
+        )
+
+    def mark_failed(self, run_id: UUID, error_message: str) -> None:
+        """Called if run_matching_for_track raises. error_message is
+        str(exc) -- not the full traceback, to avoid leaking internal
+        details to a client polling this row.
+        """
+        self.db.update(
+            self.TABLE,
+            {
+                "status": "failed",
+                "error_message": error_message,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            params={"id": f"eq.{run_id}"},
+        )
+
+    def get_run(self, run_id: UUID) -> MatchingRun | None:
+        rows = self.db.select(
+            self.TABLE, params={"select": "*", "id": f"eq.{run_id}"}
+        )
+        if not rows:
+            return None
+        return MatchingRun.model_validate(rows[0])

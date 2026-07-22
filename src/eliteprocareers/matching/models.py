@@ -31,3 +31,21 @@ class UserJobMatch(BaseModel):
     match_score: float | None = None
     ai_rationale: str | None = None
     scored_at: datetime | None = None
+
+
+class MatchingRun(BaseModel):
+    """Maps directly to the matching_runs table -- one row per triggered
+    matching run (POST /tracks/{id}/match), updated as it progresses.
+    Lets a client poll GET .../match-status/{run_id} for real completion
+    status, replacing the client-side timed-poll workaround. See
+    migrations/0004_add_matching_runs.sql.
+    """
+    id: UUID | None = None
+    user_id: UUID
+    cv_track_id: UUID
+    status: str = "running"  # running | completed | failed
+    jobs_total: int | None = None
+    jobs_processed: int = 0
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

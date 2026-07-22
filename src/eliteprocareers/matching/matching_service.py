@@ -28,7 +28,10 @@ from eliteprocareers.matching.filtering import (
     passes_stage1,
     run_stage1_filters,
 )
-from eliteprocareers.matching.repository import UserJobMatchRepository
+from eliteprocareers.matching.repository import (
+    MatchingRunRepository,
+    UserJobMatchRepository,
+)
 from eliteprocareers.profiles.repository import ProfileRepository
 from eliteprocareers.profiles.track_repository import TrackRepository
 from eliteprocareers.scoring.embeddings import (
@@ -155,3 +158,37 @@ def run_matching_for_track(
         stage1_failed=stage1_failed,
         outcomes=outcomes,
     )
+
+
+def run_matching_for_track_tracked(
+    user_id: UUID,
+    track_id: UUID,
+    run_id: UUID,
+    db: SupabaseClient,
+) -> None:
+    """Wraps run_matching_for_track with status tracking in matching_runs,
+    for the background-task path triggered by POST /tracks/{id}/match.
+    Not used by scripts/run_matching.py -- that CLI has no run_id and
+    prints its own progress instead.
+
+    Writes progress every 50 jobs (same throttle cadence as
+    scripts/run_matching.py's _print_progress, so a CLI run and an API
+    run hit Supabase at the same rate) via MatchingRunRepository, then
+    marks the run completed or failed. db must be user-scoped (not
+    service_role) since MatchingRunRepository relies on matching_runs'
+    RLS policy, same rule as UserJobMatchRepository and the existing
+    call in tracks.py's trigger_matching().
+    """
+    run_repo = MatchingRunRepository(db)
+
+    def _on_progress(done: int, total: int) -> None:
+        if done % 50 != 0 and done != total:
+            return
+        run_repo.update_progress(run_id, jobs_processed=done, jobs_total=total)
+
+    try:
+        run_matching_for_track(user_id, track_id, db=db, on_progress=_on_progress)
+        run_repo.mark_completed(run_id)
+    except Exception as exc:
+        run_repo.mark_failed(run_id, str(exc))
+        raise
