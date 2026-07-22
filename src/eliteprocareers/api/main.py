@@ -67,3 +67,16 @@ def handle_supabase_error(request: Request, exc: SupabaseError) -> JSONResponse:
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
     return HealthResponse()
+
+
+@app.get("/", tags=["health"])
+def root() -> dict:
+    """Landing response so the bare domain doesn't 404 -- points callers
+    at the interactive docs and health check rather than serving nothing.
+    """
+    return {
+        "name": "ElitePro AI Platform API",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health",
+    }
