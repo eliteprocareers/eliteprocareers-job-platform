@@ -7,17 +7,24 @@ text (that's generation/match_rationale.py, using Groq).
 
 v23 note: model is now loaded from a path bundled inside the repo
 (src/eliteprocareers/models/all-MiniLM-L6-v2), not fetched by name at
-runtime. Root cause of the production outage this fixes: Vercel's
+runtime. Root cause of the original production outage: Vercel's
 serverless containers start with an empty filesystem every invocation,
 so there was never a cached copy of the weights for HF_HUB_OFFLINE=1 to
-find -- every real trigger in production failed instantly with a
-misleading "couldn't connect to huggingface.co" error, even though the
-offline flag was already correctly set and nothing was actually trying
-to reach the network. Loading from a local, git-tracked path removes
-the runtime dependency on any external fetch entirely, in every
-environment (local, Vercel, or otherwise) -- consistent with the
-project's free-tools-only, no-external-API design principle.
+find. Loading from a local, git-tracked path removes the runtime
+dependency on any external fetch entirely.
+
+v23.1 note: after bundling the model and deploying, production still
+failed with the identical error -- meaning either the model directory
+isn't actually present in the deployed function bundle (Vercel's
+Python builder includes all reachable files by default, but there is
+an uncompressed bundle size ceiling that torch + sentence-transformers
++ this 88MB model may be approaching), or the resolved path is wrong
+in that environment. _get_model() now logs the resolved path and
+whether it exists, and lists the parent directory's actual contents
+on failure, so the next production run's logs show the real cause
+instead of guessing.
 """
+import logging
 import os
 from pathlib import Path
 
@@ -31,6 +38,8 @@ from sentence_transformers import SentenceTransformer, util
 from eliteprocareers.profiles.models import CVTrack, FullProfile
 from eliteprocareers.text_utils import clean_html_text
 
+logger = logging.getLogger(__name__)
+
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "all-MiniLM-L6-v2"
 
 
@@ -39,9 +48,27 @@ def _get_model() -> SentenceTransformer:
     """Load the embedding model once and reuse it across calls.
 
     Loads from the bundled local directory (_MODEL_DIR), not by
-    Hugging Face model name -- see module docstring, v23 note.
+    Hugging Face model name -- see module docstring, v23/v23.1 notes.
     """
-    return SentenceTransformer(str(_MODEL_DIR))
+    logger.info("Resolving embedding model path: %s", _MODEL_DIR)
+    logger.info("Path exists: %s", _MODEL_DIR.exists())
+    if not _MODEL_DIR.exists():
+        parent = _MODEL_DIR.parent
+        logger.error(
+            "Model directory not found at %s. Parent dir %s exists: %s. "
+            "Parent dir contents: %s",
+            _MODEL_DIR,
+            parent,
+            parent.exists(),
+            list(parent.iterdir()) if parent.exists() else "N/A",
+        )
+    else:
+        logger.info("Model dir contents: %s", list(_MODEL_DIR.iterdir()))
+    try:
+        return SentenceTransformer(str(_MODEL_DIR))
+    except Exception:
+        logger.exception("Failed to load SentenceTransformer from %s", _MODEL_DIR)
+        raise
 
 
 def build_role_text(track: CVTrack) -> str:
