@@ -4,8 +4,23 @@ Uses a local sentence-transformers model — no API calls, no cost, fast
 enough to run per-track per-job. This module only computes a raw similarity
 score; it does not write to the database and does not generate rationale
 text (that's generation/match_rationale.py, using Groq).
+
+v23 note: model is now loaded from a path bundled inside the repo
+(src/eliteprocareers/models/all-MiniLM-L6-v2), not fetched by name at
+runtime. Root cause of the production outage this fixes: Vercel's
+serverless containers start with an empty filesystem every invocation,
+so there was never a cached copy of the weights for HF_HUB_OFFLINE=1 to
+find -- every real trigger in production failed instantly with a
+misleading "couldn't connect to huggingface.co" error, even though the
+offline flag was already correctly set and nothing was actually trying
+to reach the network. Loading from a local, git-tracked path removes
+the runtime dependency on any external fetch entirely, in every
+environment (local, Vercel, or otherwise) -- consistent with the
+project's free-tools-only, no-external-API design principle.
 """
 import os
+from pathlib import Path
+
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from functools import lru_cache
@@ -16,17 +31,17 @@ from sentence_transformers import SentenceTransformer, util
 from eliteprocareers.profiles.models import CVTrack, FullProfile
 from eliteprocareers.text_utils import clean_html_text
 
-_MODEL_NAME = "all-MiniLM-L6-v2"
+_MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "all-MiniLM-L6-v2"
 
 
 @lru_cache(maxsize=1)
 def _get_model() -> SentenceTransformer:
     """Load the embedding model once and reuse it across calls.
 
-    Loading takes ~1-2s; we don't want to pay that cost on every
-    single job comparison.
+    Loads from the bundled local directory (_MODEL_DIR), not by
+    Hugging Face model name -- see module docstring, v23 note.
     """
-    return SentenceTransformer(_MODEL_NAME)
+    return SentenceTransformer(str(_MODEL_DIR))
 
 
 def build_role_text(track: CVTrack) -> str:
