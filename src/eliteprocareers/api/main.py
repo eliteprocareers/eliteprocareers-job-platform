@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from eliteprocareers.api.routers import auth, matches, profile, tracks
+from eliteprocareers.api.routers import auth, documents, matches, profile, tracks
 from eliteprocareers.api.schemas import HealthResponse
 from eliteprocareers.db.client import SupabaseError
 from eliteprocareers.logging_setup import setup_logging
@@ -53,6 +53,7 @@ app.include_router(auth.router)
 app.include_router(profile.router)
 app.include_router(tracks.router)
 app.include_router(matches.router)
+app.include_router(documents.router)
 
 
 @app.exception_handler(SupabaseError)

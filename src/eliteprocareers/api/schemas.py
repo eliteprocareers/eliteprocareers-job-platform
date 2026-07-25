@@ -116,3 +116,20 @@ class MatchTriggerResponse(BaseModel):
     run_id: UUID
     status: str = "started"
     message: str
+
+
+class GenerateCVRequest(BaseModel):
+    """Body for POST /tracks/{track_id}/generate-cv."""
+    job_id: UUID
+
+
+class GenerateCoverLetterRequest(BaseModel):
+    """Body for POST /tracks/{track_id}/generate-cover-letter."""
+    job_id: UUID
+
+
+class GenerateScreeningAnswerRequest(BaseModel):
+    """Body for POST /tracks/{track_id}/generate-screening-answer."""
+    job_id: UUID
+    question: str
+    word_limit: int | None = None
