@@ -22,9 +22,28 @@ def test_health():
     assert r.json() == {"status": "ok"}
 
 
-@pytest.mark.parametrize("path", ["/profile/me", "/tracks", f"/tracks/{FAKE_TRACK_ID}/matches"])
+FAKE_UPLOAD_ID = "f499ad20-ee37-4a43-8a13-5eef00cfd43a"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/profile/me",
+        "/tracks",
+        f"/tracks/{FAKE_TRACK_ID}/matches",
+        f"/profile/cv-upload-status/{FAKE_UPLOAD_ID}",
+    ],
+)
 def test_protected_routes_require_auth(path):
     r = client.get(path)
+    assert r.status_code == 401
+
+
+def test_cv_upload_requires_auth():
+    # POST, not GET, since /profile/cv-upload only accepts POST -- kept
+    # as its own test rather than folded into the parametrized GET list
+    # above.
+    r = client.post("/profile/cv-upload", files={"file": ("cv.txt", b"x" * 200, "text/plain")})
     assert r.status_code == 401
 
 

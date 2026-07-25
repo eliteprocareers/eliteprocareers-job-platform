@@ -231,3 +231,92 @@ class CVContent(BaseModel):
     @classmethod
     def from_json(cls, raw: str) -> "CVContent":
         return cls.model_validate_json(raw)
+
+
+class CVUpload(BaseModel):
+    """Maps directly to the cv_uploads table -- one row per uploaded CV
+    file, updated as background parsing progresses. Lets a client poll
+    GET /profile/cv-upload-status/{upload_id} for real completion
+    status, the same shape as MatchingRun/matching_runs from Stage 2.
+    See migrations/0005_add_cv_uploads.sql.
+    """
+    id: UUID | None = None
+    user_id: UUID
+    filename: str
+    file_size_bytes: int
+    status: str = "processing"  # processing | completed | failed
+    raw_text: str | None = None
+    fields_extracted: int | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class ParsedWorkExperience(BaseModel):
+    """One work_experience entry as extracted from raw CV text by the
+    LLM. Dates are kept as free-text strings at extraction time (CVs
+    write dates wildly inconsistently -- "2019-2021", "Jan 2019 -
+    Present", "2019 to date") rather than forcing the LLM to normalize
+    into ISO dates and risk it inventing plausible-looking wrong ones;
+    normalization into work_experience.start_date/end_date is a
+    deliberately deferred follow-up, not attempted here.
+    """
+    company: str
+    title: str
+    location: str | None = None
+    start_date_text: str | None = None
+    end_date_text: str | None = None
+    is_current: bool = False
+    description: str | None = None
+
+
+class ParsedEducation(BaseModel):
+    institution: str
+    degree: str | None = None
+    field_of_study: str | None = None
+    start_date_text: str | None = None
+    end_date_text: str | None = None
+
+
+class ParsedCertification(BaseModel):
+    name: str
+    issuer: str | None = None
+
+
+class ParsedLanguage(BaseModel):
+    language: str
+    proficiency: LanguageProficiency | None = None
+
+
+class ParsedProject(BaseModel):
+    name: str
+    description: str | None = None
+    url: str | None = None
+
+
+class ParsedCVProfile(BaseModel):
+    """The LLM's structured extraction of a raw CV's text, before any of
+    it is written to candidate_profiles/work_experience/etc. Deliberately
+    separate from CandidateProfile/WorkExperience/etc -- those require a
+    real profile_id (a DB foreign key) that doesn't exist yet at
+    extraction time, and carry DB-only fields (id, created_at) that have
+    no meaning for a value that hasn't been saved.
+
+    Every field is optional/defaulted -- a CV that doesn't mention e.g.
+    a portfolio URL should produce None there, not force the LLM to
+    invent one to satisfy validation.
+    """
+    full_name: str | None = None
+    headline: str | None = None
+    summary: str | None = None
+    location: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    linkedin_url: str | None = None
+    portfolio_url: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    work_experience: list[ParsedWorkExperience] = Field(default_factory=list)
+    education: list[ParsedEducation] = Field(default_factory=list)
+    certifications: list[ParsedCertification] = Field(default_factory=list)
+    languages: list[ParsedLanguage] = Field(default_factory=list)
+    projects: list[ParsedProject] = Field(default_factory=list)

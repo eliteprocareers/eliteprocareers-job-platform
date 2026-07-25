@@ -88,6 +88,20 @@ class UpdateTrackRequest(BaseModel):
     salary_currency: str | None = None
 
 
+class CVUploadTriggerResponse(BaseModel):
+    """Response for POST /profile/cv-upload. Parsing happens in the
+    background (BackgroundTasks), same reason as MatchTriggerResponse
+    below -- LLM extraction takes a few seconds, long enough that doing
+    it inline would make the upload request itself feel hung. Poll
+    GET /profile/cv-upload-status/{upload_id} for real completion
+    status.
+    """
+    upload_id: UUID
+    filename: str
+    status: str = "processing"
+    message: str
+
+
 class MatchTriggerResponse(BaseModel):
     """Response for POST /tracks/{track_id}/match. The actual matching
     run happens in the background (BackgroundTasks) -- this just
