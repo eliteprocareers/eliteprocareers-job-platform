@@ -71,3 +71,31 @@ export interface MatchWithJob {
   job_url: string | null;
   job_location: string | null;
 }
+
+export type DocType = 'cv' | 'cover_letter' | 'screening_answer';
+
+export interface GeneratedDocument {
+  id?: string;
+  user_id: string;
+  cv_track_id: string;
+  application_id?: string | null;
+  doc_type: DocType;
+  content: string;
+  version: number;
+  ai_model_used?: string | null;
+  created_at?: string;
+}
+
+export interface GenerateCVRequest {
+  job_id: string;
+}
+
+export interface GenerateCoverLetterRequest {
+  job_id: string;
+}
+
+export interface GenerateScreeningAnswerRequest {
+  job_id: string;
+  question: string;
+  word_limit?: number | null;
+}

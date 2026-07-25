@@ -93,9 +93,24 @@ export default function TrackMatches() {
               <p className="text-sm text-slate-400">{m.job_company}{m.job_location ? ` · ${m.job_location}` : ''}</p>
               {m.ai_rationale && <p className="text-sm text-slate-500 mt-2 max-w-xl">{m.ai_rationale}</p>}
             </div>
-            <span className="text-lg font-semibold text-indigo-400 shrink-0 ml-4">
-              {m.match_score !== null ? m.match_score.toFixed(4) : '—'}
-            </span>
+            <div className="flex flex-col items-end gap-2 shrink-0 ml-4">
+              <span className="text-lg font-semibold text-indigo-400">
+                {m.match_score !== null ? m.match_score.toFixed(4) : '—'}
+              </span>
+              <Link
+                to={`/tracks/${trackId}/jobs/${m.job_id}/documents`}
+                state={{
+                  job: {
+                    job_title: m.job_title,
+                    job_company: m.job_company,
+                    job_url: m.job_url,
+                  },
+                }}
+                className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-1.5"
+              >
+                Generate documents
+              </Link>
+            </div>
           </div>
         ))}
       </div>
