@@ -1,15 +1,14 @@
 import { useParams, useLocation, Link } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/api';
 import type {
   CVContent,
   DocType,
+  DocumentsBundle,
   GeneratedDocument,
-  GenerateCVRequest,
-  GenerateCoverLetterRequest,
-  GenerateScreeningAnswerRequest,
   MatchWithJob,
+  ScreeningAnswerRequest,
 } from '../lib/types';
 
 interface JobSummary {
@@ -22,15 +21,12 @@ interface LocationState {
   job?: JobSummary;
 }
 
-// Known backend limitation (not fixed here): generated_documents.version is
-// computed per (cv_track_id, doc_type) only -- there is no job_id column,
-// so a "latest" document for a track cannot be trusted to belong to any
-// particular job once more than one job has documents generated under the
-// same track. Rather than call the /latest or list endpoints and risk
-// silently showing another job's content as if it were this job's, this
-// page only ever displays content that came back directly from a POST
-// made on this page, in this session, for this exact job_id. Nothing is
-// preloaded from history.
+// Versioning is now genuinely job-scoped on the backend (generated_documents
+// has a job_id column, migration 0006) -- GET .../documents returns the
+// latest of each type for this exact (track, job) pair, so it's safe to
+// preload it on mount instead of only showing content generated fresh in
+// this session. Rows created before job_id existed have job_id = NULL and
+// won't show up here for any job -- not recoverable, not a bug in this page.
 const DOC_LABELS: Record<DocType, string> = {
   cv: 'Tailored CV',
   cover_letter: 'Cover Letter',
@@ -167,25 +163,11 @@ export default function TrackJobDocuments() {
   const { trackId, jobId } = useParams<{ trackId: string; jobId: string }>();
   const location = useLocation();
   const stateJob = (location.state as LocationState | null)?.job;
+  const queryClient = useQueryClient();
 
-  const [docs, setDocs] = useState<Partial<Record<DocType, GeneratedDocument>>>({});
   const [errors, setErrors] = useState<Partial<Record<DocType, string>>>({});
   const [question, setQuestion] = useState('');
   const [wordLimit, setWordLimit] = useState<string>('');
-  const [hadPriorJob, setHadPriorJob] = useState(false);
-  const [lastJobId, setLastJobId] = useState(jobId);
-
-  // Reset local state whenever the job changes, and note if this page had
-  // already generated something for a *different* job in this session --
-  // that's the concrete case the shared version counter can silently mangle.
-  // Adjusted during render (not in an effect) per React's guidance for
-  // resetting state in response to a prop change.
-  if (jobId !== lastJobId) {
-    setLastJobId(jobId);
-    if (Object.keys(docs).length > 0) setHadPriorJob(true);
-    setDocs({});
-    setErrors({});
-  }
 
   // Fallback if the page was opened directly (no router state): find the
   // job's title/company from the existing matches endpoint rather than
@@ -202,19 +184,44 @@ export default function TrackJobDocuments() {
   });
 
   const job: JobSummary | undefined =
-    stateJob ?? matches?.find((m) => m.job_id === jobId) as JobSummary | undefined;
+    stateJob ?? (matches?.find((m) => m.job_id === jobId) as JobSummary | undefined);
 
-  function useGenerateMutation<TReq>(docType: DocType, path: string) {
+  const bundleQueryKey = ['documents', trackId, jobId];
+  const {
+    data: bundle,
+    isLoading: bundleLoading,
+    error: bundleError,
+  } = useQuery({
+    queryKey: bundleQueryKey,
+    queryFn: async () => {
+      const { data } = await api.get<DocumentsBundle>(
+        `/tracks/${trackId}/jobs/${jobId}/documents`
+      );
+      return data;
+    },
+    enabled: !!trackId && !!jobId,
+  });
+
+  const noMatch = Boolean(
+    bundleError && (bundleError as { response?: { status?: number } })?.response?.status === 404
+  );
+
+  function useGenerateMutation<TReq = void>(docType: DocType, path: string) {
     return useMutation({
       mutationFn: async (payload: TReq) => {
         const { data } = await api.post<GeneratedDocument>(
-          `/tracks/${trackId}/${path}`,
+          `/tracks/${trackId}/jobs/${jobId}/${path}`,
           payload
         );
         return data;
       },
       onSuccess: (doc) => {
-        setDocs((prev) => ({ ...prev, [docType]: doc }));
+        queryClient.setQueryData<DocumentsBundle>(bundleQueryKey, (prev) => ({
+          cv: prev?.cv ?? null,
+          cover_letter: prev?.cover_letter ?? null,
+          screening_answer: prev?.screening_answer ?? null,
+          [docType]: doc,
+        }));
         setErrors((prev) => ({ ...prev, [docType]: undefined }));
       },
       onError: () => {
@@ -226,12 +233,9 @@ export default function TrackJobDocuments() {
     });
   }
 
-  const cvMutation = useGenerateMutation<GenerateCVRequest>('cv', 'generate-cv');
-  const coverLetterMutation = useGenerateMutation<GenerateCoverLetterRequest>(
-    'cover_letter',
-    'generate-cover-letter'
-  );
-  const screeningMutation = useGenerateMutation<GenerateScreeningAnswerRequest>(
+  const cvMutation = useGenerateMutation('cv', 'generate-cv');
+  const coverLetterMutation = useGenerateMutation('cover_letter', 'generate-cover-letter');
+  const screeningMutation = useGenerateMutation<ScreeningAnswerRequest>(
     'screening_answer',
     'generate-screening-answer'
   );
@@ -247,7 +251,7 @@ export default function TrackJobDocuments() {
         ← Back to matches
       </Link>
 
-      <div className="mt-4 mb-2">
+      <div className="mt-4 mb-6">
         <h1 className="text-2xl font-semibold text-slate-100">Generate documents</h1>
         {job ? (
           <p className="text-sm text-slate-400 mt-1">
@@ -265,25 +269,15 @@ export default function TrackJobDocuments() {
         )}
       </div>
 
-      <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-4 mb-6 text-sm text-amber-200">
-        <p className="font-medium mb-1">Known limitation: document history isn't job-scoped yet</p>
-        <p className="text-amber-300/90">
-          Generated documents don't currently record which job they were made for, so a
-          "previously generated" CV or cover letter can't be reliably matched back to this
-          specific job once you've generated documents for more than one job under this track.
-          Only documents generated below, in this session, are guaranteed to be for{' '}
-          <span className="font-medium">this</span> job — always regenerate rather than trusting
-          anything saved from before.
-        </p>
-        {hadPriorJob && (
-          <p className="text-amber-300/90 mt-2 font-medium">
-            You generated documents for a different job earlier in this session. Those are no
-            longer shown here, and regenerating below will also become the new "latest" version
-            for this track's document history — the earlier job's saved version may now be
-            harder to tell apart from this one.
-          </p>
-        )}
-      </div>
+      {noMatch && (
+        <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-4 mb-6 text-sm text-amber-200">
+          No match exists yet between this track and this job, so documents can't be generated
+          for it. Run matching for this track first, or open this page from a job in the matches
+          list.
+        </div>
+      )}
+
+      {bundleLoading && <p className="text-sm text-slate-500 mb-4">Loading saved documents...</p>}
 
       <div className="space-y-6">
         {/* CV */}
@@ -291,9 +285,10 @@ export default function TrackJobDocuments() {
           title={DOC_LABELS.cv}
           isPending={cvMutation.isPending}
           error={errors.cv}
-          doc={docs.cv}
-          onGenerate={() => cvMutation.mutate({ job_id: jobId })}
-          generateLabel={docs.cv ? 'Regenerate CV' : 'Generate CV'}
+          doc={bundle?.cv ?? undefined}
+          onGenerate={() => cvMutation.mutate(undefined)}
+          generateLabel={bundle?.cv ? 'Regenerate CV' : 'Generate CV'}
+          disabled={noMatch}
         />
 
         {/* Cover letter */}
@@ -301,9 +296,10 @@ export default function TrackJobDocuments() {
           title={DOC_LABELS.cover_letter}
           isPending={coverLetterMutation.isPending}
           error={errors.cover_letter}
-          doc={docs.cover_letter}
-          onGenerate={() => coverLetterMutation.mutate({ job_id: jobId })}
-          generateLabel={docs.cover_letter ? 'Regenerate cover letter' : 'Generate cover letter'}
+          doc={bundle?.cover_letter ?? undefined}
+          onGenerate={() => coverLetterMutation.mutate(undefined)}
+          generateLabel={bundle?.cover_letter ? 'Regenerate cover letter' : 'Generate cover letter'}
+          disabled={noMatch}
         />
 
         {/* Screening answer */}
@@ -329,33 +325,32 @@ export default function TrackJobDocuments() {
           <button
             onClick={() =>
               screeningMutation.mutate({
-                job_id: jobId,
                 question,
                 word_limit: wordLimit ? Number(wordLimit) : undefined,
               })
             }
-            disabled={screeningMutation.isPending || !question.trim()}
+            disabled={screeningMutation.isPending || !question.trim() || noMatch}
             className="text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-2 font-medium"
           >
             {screeningMutation.isPending
               ? 'Generating...'
-              : docs.screening_answer
+              : bundle?.screening_answer
                 ? 'Regenerate answer'
                 : 'Generate answer'}
           </button>
           {errors.screening_answer && (
             <p className="text-red-400 text-sm mt-2">{errors.screening_answer}</p>
           )}
-          {docs.screening_answer && (
+          {bundle?.screening_answer && (
             <div className="mt-3">
               <div className="flex justify-between items-center mb-1">
                 <span className="text-xs text-slate-500">
-                  Version {docs.screening_answer.version}
+                  Version {bundle.screening_answer.version}
                 </span>
-                <CopyButton text={docs.screening_answer.content} />
+                <CopyButton text={bundle.screening_answer.content} />
               </div>
               <pre className="whitespace-pre-wrap text-sm text-slate-200 bg-slate-950 rounded p-3 max-h-96 overflow-auto">
-                {docs.screening_answer.content}
+                {bundle.screening_answer.content}
               </pre>
             </div>
           )}
@@ -372,6 +367,7 @@ function DocumentCard({
   doc,
   onGenerate,
   generateLabel,
+  disabled,
 }: {
   title: string;
   isPending: boolean;
@@ -379,6 +375,7 @@ function DocumentCard({
   doc?: GeneratedDocument;
   onGenerate: () => void;
   generateLabel: string;
+  disabled?: boolean;
 }) {
   const cv = doc?.doc_type === 'cv' ? parseCV(doc.content) : null;
 
@@ -388,7 +385,7 @@ function DocumentCard({
         <h2 className="text-slate-100 font-medium">{title}</h2>
         <button
           onClick={onGenerate}
-          disabled={isPending}
+          disabled={isPending || disabled}
           className="text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-2 font-medium"
         >
           {isPending ? 'Generating...' : generateLabel}
@@ -424,7 +421,7 @@ function DocumentCard({
         </div>
       )}
       {!doc && !isPending && (
-        <p className="text-sm text-slate-500">Not generated yet in this session.</p>
+        <p className="text-sm text-slate-500">Not generated yet.</p>
       )}
     </div>
   );
