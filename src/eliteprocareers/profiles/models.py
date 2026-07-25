@@ -198,6 +198,7 @@ class GeneratedDocument(BaseModel):
     id: UUID | None = None
     user_id: UUID
     cv_track_id: UUID
+    job_id: UUID | None = None
     application_id: UUID | None = None
     doc_type: DocType
     content: str

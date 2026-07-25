@@ -85,7 +85,7 @@ def generate_cv(
     )
     doc_repo = DocumentRepository(current_user.db)
     try:
-        return generate_tailored_cv(profile, track, job_description, doc_repo)
+        return generate_tailored_cv(profile, track, job_description, doc_repo, job_id=payload.job_id)
     except CVGenerationError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -110,7 +110,7 @@ def generate_cover_letter_endpoint(
         track_id, payload.job_id, current_user
     )
     doc_repo = DocumentRepository(current_user.db)
-    return generate_cover_letter(profile, track, job_description, doc_repo)
+    return generate_cover_letter(profile, track, job_description, doc_repo, job_id=payload.job_id)
 
 
 @router.post(
@@ -134,7 +134,8 @@ def generate_screening_answer_endpoint(
     )
     doc_repo = DocumentRepository(current_user.db)
     return generate_screening_answer(
-        profile, track, job_description, payload.question, doc_repo, payload.word_limit
+        profile, track, job_description, payload.question, doc_repo, payload.word_limit,
+        job_id=payload.job_id,
     )
 
 

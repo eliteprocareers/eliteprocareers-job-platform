@@ -53,6 +53,7 @@ def generate_cover_letter(
     track: CVTrack,
     job_description: str,
     doc_repo: DocumentRepository,
+    job_id=None,
 ) -> GeneratedDocument:
     """Full pipeline: build prompt -> call LLM -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
@@ -66,5 +67,6 @@ def generate_cover_letter(
         cv_track_id=track.id,
         doc_type=DocType.cover_letter,
         content=content,
+        job_id=job_id,
         ai_model_used=GROQ_MODEL,
     )
