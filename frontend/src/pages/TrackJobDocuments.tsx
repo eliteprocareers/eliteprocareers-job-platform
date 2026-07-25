@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/api';
 import type {
+  CVContent,
   DocType,
   GeneratedDocument,
   GenerateCVRequest,
@@ -38,11 +39,112 @@ const DOC_LABELS: Record<DocType, string> = {
 
 function formatContent(doc: GeneratedDocument): string {
   if (doc.doc_type !== 'cv') return doc.content;
+  const parsed = parseCV(doc.content);
+  return parsed ? cvToPlainText(parsed) : doc.content;
+}
+
+function parseCV(raw: string): CVContent | null {
   try {
-    return JSON.stringify(JSON.parse(doc.content), null, 2);
+    const obj = JSON.parse(raw);
+    if (typeof obj?.summary !== 'string' || !Array.isArray(obj?.work_experience)) return null;
+    return obj as CVContent;
   } catch {
-    return doc.content;
+    return null;
   }
+}
+
+function cvToPlainText(cv: CVContent): string {
+  const lines: string[] = [];
+  if (cv.summary) lines.push(cv.summary, '');
+  if (cv.skills.length) {
+    lines.push('SKILLS', cv.skills.join(', '), '');
+  }
+  if (cv.work_experience.length) {
+    lines.push('WORK EXPERIENCE');
+    for (const entry of cv.work_experience) {
+      lines.push(`${entry.title} — ${entry.company} (${entry.dates})`);
+      for (const bullet of entry.bullets) lines.push(`  • ${bullet}`);
+      lines.push('');
+    }
+  }
+  if (cv.education.length) lines.push('EDUCATION', ...cv.education, '');
+  if (cv.certifications.length) lines.push('CERTIFICATIONS', ...cv.certifications, '');
+  return lines.join('\n').trim();
+}
+
+function CvView({ cv }: { cv: CVContent }) {
+  return (
+    <div className="space-y-4 text-sm">
+      {cv.summary && <p className="text-slate-200 leading-relaxed">{cv.summary}</p>}
+
+      {cv.skills.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Skills
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {cv.skills.map((skill, i) => (
+              <span key={i} className="bg-slate-800 text-slate-300 rounded px-2 py-0.5 text-xs">
+                {skill}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {cv.work_experience.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Work experience
+          </h3>
+          <div className="space-y-3">
+            {cv.work_experience.map((entry, i) => (
+              <div key={i}>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-slate-100 font-medium">{entry.title}</span>
+                  <span className="text-xs text-slate-500">{entry.dates}</span>
+                </div>
+                <p className="text-slate-400 text-xs mb-1">{entry.company}</p>
+                {entry.bullets.length > 0 && (
+                  <ul className="list-disc list-inside text-slate-300 space-y-0.5">
+                    {entry.bullets.map((bullet, j) => (
+                      <li key={j}>{bullet}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {cv.education.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Education
+          </h3>
+          <ul className="text-slate-300 space-y-0.5">
+            {cv.education.map((entry, i) => (
+              <li key={i}>{entry}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {cv.certifications.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Certifications
+          </h3>
+          <ul className="text-slate-300 space-y-0.5">
+            {cv.certifications.map((entry, i) => (
+              <li key={i}>{entry}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -278,6 +380,8 @@ function DocumentCard({
   onGenerate: () => void;
   generateLabel: string;
 }) {
+  const cv = doc?.doc_type === 'cv' ? parseCV(doc.content) : null;
+
   return (
     <div className="bg-slate-900 rounded-lg p-4">
       <div className="flex justify-between items-center mb-3">
@@ -293,13 +397,30 @@ function DocumentCard({
       {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
       {doc && (
         <div>
-          <div className="flex justify-between items-center mb-1">
+          <div className="flex justify-between items-center mb-2">
             <span className="text-xs text-slate-500">Version {doc.version}</span>
             <CopyButton text={formatContent(doc)} />
           </div>
-          <pre className="whitespace-pre-wrap text-sm text-slate-200 bg-slate-950 rounded p-3 max-h-96 overflow-auto">
-            {formatContent(doc)}
-          </pre>
+          {doc.doc_type === 'cv' ? (
+            cv ? (
+              <div className="bg-slate-950 rounded p-4 max-h-[32rem] overflow-auto">
+                <CvView cv={cv} />
+              </div>
+            ) : (
+              <>
+                <p className="text-amber-400 text-xs mb-2">
+                  Couldn't parse this as structured CV content — showing raw response.
+                </p>
+                <pre className="whitespace-pre-wrap text-sm text-slate-200 bg-slate-950 rounded p-3 max-h-96 overflow-auto">
+                  {doc.content}
+                </pre>
+              </>
+            )
+          ) : (
+            <pre className="whitespace-pre-wrap text-sm text-slate-200 bg-slate-950 rounded p-3 max-h-96 overflow-auto">
+              {doc.content}
+            </pre>
+          )}
         </div>
       )}
       {!doc && !isPending && (

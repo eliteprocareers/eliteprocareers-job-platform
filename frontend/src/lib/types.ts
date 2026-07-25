@@ -99,3 +99,18 @@ export interface GenerateScreeningAnswerRequest {
   question: string;
   word_limit?: number | null;
 }
+
+export interface CVWorkExperienceEntry {
+  title: string;
+  company: string;
+  dates: string;
+  bullets: string[];
+}
+
+export interface CVContent {
+  summary: string;
+  skills: string[];
+  work_experience: CVWorkExperienceEntry[];
+  education: string[];
+  certifications: string[];
+}
