@@ -112,6 +112,7 @@ def generate_tailored_cv(
     track: CVTrack,
     job_description: str,
     doc_repo: DocumentRepository,
+    job_id=None,
 ) -> GeneratedDocument:
     """Full pipeline: build prompt -> call LLM -> parse -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
@@ -125,5 +126,6 @@ def generate_tailored_cv(
         cv_track_id=track.id,
         doc_type=DocType.cv,
         content=cv_content.to_json(),
+        job_id=job_id,
         ai_model_used=GROQ_MODEL,
     )

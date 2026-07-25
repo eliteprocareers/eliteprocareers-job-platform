@@ -25,6 +25,9 @@ def test_health():
 FAKE_UPLOAD_ID = "f499ad20-ee37-4a43-8a13-5eef00cfd43a"
 
 
+FAKE_JOB_ID = "11111111-1111-1111-1111-111111111111"
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -32,8 +35,7 @@ FAKE_UPLOAD_ID = "f499ad20-ee37-4a43-8a13-5eef00cfd43a"
         "/tracks",
         f"/tracks/{FAKE_TRACK_ID}/matches",
         f"/profile/cv-upload-status/{FAKE_UPLOAD_ID}",
-        f"/tracks/{FAKE_TRACK_ID}/documents/cv",
-        f"/tracks/{FAKE_TRACK_ID}/documents/cv/latest",
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/documents",
     ],
 )
 def test_protected_routes_require_auth(path):
@@ -49,17 +51,14 @@ def test_cv_upload_requires_auth():
     assert r.status_code == 401
 
 
-FAKE_JOB_ID = "11111111-1111-1111-1111-111111111111"
-
-
 @pytest.mark.parametrize(
     "path,body",
     [
-        (f"/tracks/{FAKE_TRACK_ID}/generate-cv", {"job_id": FAKE_JOB_ID}),
-        (f"/tracks/{FAKE_TRACK_ID}/generate-cover-letter", {"job_id": FAKE_JOB_ID}),
+        (f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cv", None),
+        (f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cover-letter", None),
         (
-            f"/tracks/{FAKE_TRACK_ID}/generate-screening-answer",
-            {"job_id": FAKE_JOB_ID, "question": "Why this role?"},
+            f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-screening-answer",
+            {"question": "Why this role?"},
         ),
     ],
 )
@@ -207,12 +206,24 @@ def _job_row():
     }
 
 
-def _make_fake_request(job_present=True):
+def _match_row():
+    return {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "user_id": FAKE_USER_ID,
+        "job_id": FAKE_JOB_ID,
+        "cv_track_id": FAKE_TRACK_ID,
+        "match_score": 0.87,
+        "ai_rationale": "Strong fit on PM experience.",
+        "scored_at": "2026-07-20T00:00:00Z",
+    }
+
+
+def _make_fake_request(job_present=True, match_present=True):
     """Builds a fake httpx.request()/httpx.get() handler covering every
     Supabase table hit by the generate-* pipeline: auth, cv_tracks,
-    candidate_profiles + its empty related tables, jobs, and
-    generated_documents (both the list_versions read inside
-    create_document and the final insert).
+    user_job_matches (ownership-of-match check), candidate_profiles +
+    its empty related tables, jobs, and generated_documents (both the
+    list_versions read inside create_document and the final insert).
     """
     empty_profile_tables = (
         "candidate_skills",
@@ -236,6 +247,9 @@ def _make_fake_request(job_present=True):
             return httpx.Response(
                 200, json=[_track_row()], request=httpx.Request(method, url)
             )
+        if "/rest/v1/user_job_matches" in url:
+            payload = [_match_row()] if match_present else []
+            return httpx.Response(200, json=payload, request=httpx.Request(method, url))
         if "/rest/v1/candidate_profiles" in url:
             return httpx.Response(
                 200, json=[_profile_row()], request=httpx.Request(method, url)
@@ -256,6 +270,7 @@ def _make_fake_request(job_present=True):
                     "id": FAKE_DOC_ID,
                     "user_id": FAKE_USER_ID,
                     "cv_track_id": FAKE_TRACK_ID,
+                    "job_id": body.get("job_id"),
                     "application_id": None,
                     "doc_type": body.get("doc_type"),
                     "content": body.get("content"),
@@ -291,14 +306,14 @@ def test_generate_cv_success(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_groq_post)
 
     r = client.post(
-        f"/tracks/{FAKE_TRACK_ID}/generate-cv",
-        json={"job_id": FAKE_JOB_ID},
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cv",
         headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
     )
     assert r.status_code == 201
     body = r.json()
     assert body["doc_type"] == "cv"
     assert body["cv_track_id"] == FAKE_TRACK_ID
+    assert body["job_id"] == FAKE_JOB_ID
     assert "Tailored PM summary." in body["content"]
 
 
@@ -321,14 +336,56 @@ def test_generate_cover_letter_success(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_groq_post)
 
     r = client.post(
-        f"/tracks/{FAKE_TRACK_ID}/generate-cover-letter",
-        json={"job_id": FAKE_JOB_ID},
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cover-letter",
         headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
     )
     assert r.status_code == 201
     body = r.json()
     assert body["doc_type"] == "cover_letter"
+    assert body["job_id"] == FAKE_JOB_ID
     assert body["content"].startswith("Dear Hiring Manager,")
+
+
+def test_generate_screening_answer_success(monkeypatch):
+    fake_request = _make_fake_request()
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    def fake_groq_post(url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Because your mission matches mine."}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_groq_post)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-screening-answer",
+        json={"question": "Why do you want to work here?", "word_limit": 100},
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["doc_type"] == "screening_answer"
+    assert body["job_id"] == FAKE_JOB_ID
+
+
+def test_generate_cv_no_match_returns_404(monkeypatch):
+    # No user_job_matches row for this (user, job, track) -- the
+    # job-scoped router requires an existing match before it'll
+    # generate documents against a job, rather than letting a client
+    # generate a CV against an arbitrary job_id no matching run ever
+    # surfaced.
+    fake_request = _make_fake_request(match_present=False)
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cv",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 404
 
 
 def test_generate_cv_job_not_found_returns_404(monkeypatch):
@@ -337,8 +394,7 @@ def test_generate_cv_job_not_found_returns_404(monkeypatch):
     monkeypatch.setattr(httpx, "request", fake_request)
 
     r = client.post(
-        f"/tracks/{FAKE_TRACK_ID}/generate-cv",
-        json={"job_id": FAKE_JOB_ID},
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cv",
         headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
     )
     assert r.status_code == 404
@@ -364,8 +420,66 @@ def test_generate_cv_not_owned_track_returns_404(monkeypatch):
     monkeypatch.setattr(httpx, "request", handler)
 
     r = client.post(
-        f"/tracks/{FAKE_TRACK_ID}/generate-cv",
-        json={"job_id": FAKE_JOB_ID},
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cv",
         headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
     )
     assert r.status_code == 404
+
+
+def test_get_documents_bundle_returns_latest_per_type(monkeypatch):
+    """GET .../documents should return the latest of each doc type for
+    this exact (track, job) pair -- the whole point of job-scoped
+    versioning -- and None for any type never generated, not a 404.
+    """
+
+    def handler(method, url, **kwargs):
+        if url.endswith("/auth/v1/user"):
+            return httpx.Response(
+                200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
+            )
+        if "/rest/v1/cv_tracks" in url:
+            return httpx.Response(
+                200, json=[_track_row()], request=httpx.Request(method, url)
+            )
+        if "/rest/v1/user_job_matches" in url:
+            return httpx.Response(
+                200, json=[_match_row()], request=httpx.Request(method, url)
+            )
+        if "/rest/v1/jobs" in url:
+            return httpx.Response(
+                200, json=[_job_row()], request=httpx.Request(method, url)
+            )
+        if "/rest/v1/generated_documents" in url:
+            params = kwargs.get("params", {})
+            if params.get("doc_type") == "eq.cv":
+                cv_row = {
+                    "id": FAKE_DOC_ID,
+                    "user_id": FAKE_USER_ID,
+                    "cv_track_id": FAKE_TRACK_ID,
+                    "job_id": FAKE_JOB_ID,
+                    "application_id": None,
+                    "doc_type": "cv",
+                    "content": '{"summary": "s", "skills": [], "work_experience": [], '
+                    '"education": [], "certifications": []}',
+                    "version": 2,
+                    "ai_model_used": "llama-3.3-70b-versatile",
+                    "created_at": "2026-07-25T09:00:00Z",
+                }
+                return httpx.Response(200, json=[cv_row], request=httpx.Request(method, url))
+            # cover_letter and screening_answer: nothing generated yet.
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
+        raise AssertionError(f"unexpected {method} {url}")
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: handler("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", handler)
+
+    r = client.get(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/documents",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cv"]["version"] == 2
+    assert body["cv"]["job_id"] == FAKE_JOB_ID
+    assert body["cover_letter"] is None
+    assert body["screening_answer"] is None

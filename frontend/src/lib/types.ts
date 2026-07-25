@@ -78,6 +78,7 @@ export interface GeneratedDocument {
   id?: string;
   user_id: string;
   cv_track_id: string;
+  job_id?: string | null;
   application_id?: string | null;
   doc_type: DocType;
   content: string;
@@ -86,18 +87,15 @@ export interface GeneratedDocument {
   created_at?: string;
 }
 
-export interface GenerateCVRequest {
-  job_id: string;
-}
-
-export interface GenerateCoverLetterRequest {
-  job_id: string;
-}
-
-export interface GenerateScreeningAnswerRequest {
-  job_id: string;
+export interface ScreeningAnswerRequest {
   question: string;
   word_limit?: number | null;
+}
+
+export interface DocumentsBundle {
+  cv: GeneratedDocument | null;
+  cover_letter: GeneratedDocument | null;
+  screening_answer: GeneratedDocument | null;
 }
 
 export interface CVWorkExperienceEntry {

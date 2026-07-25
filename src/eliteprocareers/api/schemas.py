@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from eliteprocareers.profiles.models import GeneratedDocument
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -118,18 +120,17 @@ class MatchTriggerResponse(BaseModel):
     message: str
 
 
-class GenerateCVRequest(BaseModel):
-    """Body for POST /tracks/{track_id}/generate-cv."""
-    job_id: UUID
-
-
-class GenerateCoverLetterRequest(BaseModel):
-    """Body for POST /tracks/{track_id}/generate-cover-letter."""
-    job_id: UUID
-
-
-class GenerateScreeningAnswerRequest(BaseModel):
-    """Body for POST /tracks/{track_id}/generate-screening-answer."""
-    job_id: UUID
+class ScreeningAnswerRequest(BaseModel):
+    """Body for POST /tracks/{track_id}/jobs/{job_id}/generate-screening-answer."""
     question: str
     word_limit: int | None = None
+
+
+class DocumentsBundle(BaseModel):
+    """Response for GET /tracks/{track_id}/jobs/{job_id}/documents -- the
+    latest version of each doc type for this track+job, or None if that
+    type hasn't been generated yet.
+    """
+    cv: GeneratedDocument | None = None
+    cover_letter: GeneratedDocument | None = None
+    screening_answer: GeneratedDocument | None = None
