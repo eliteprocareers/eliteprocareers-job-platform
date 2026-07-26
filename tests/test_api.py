@@ -483,3 +483,217 @@ def test_get_documents_bundle_returns_latest_per_type(monkeypatch):
     assert body["cv"]["job_id"] == FAKE_JOB_ID
     assert body["cover_letter"] is None
     assert body["screening_answer"] is None
+
+
+# --- Stage 5: applications router --------------------------------------
+#
+# create_application requires an existing match (same _get_owned_job_with_match
+# gate as the generate-* endpoints above), so these reuse _make_fake_request
+# and the same job_present/match_present toggles rather than building a
+# second, parallel fake-handler system.
+
+FAKE_APPLICATION_ID = "802be1b8-7e78-42de-9602-d114e7976c49"
+
+
+def _application_row(**overrides) -> dict:
+    row = {
+        "id": FAKE_APPLICATION_ID,
+        "user_id": FAKE_USER_ID,
+        "job_id": FAKE_JOB_ID,
+        "cv_track_id": FAKE_TRACK_ID,
+        "status": "draft",
+        "applied_at": None,
+        "notes": None,
+        "created_at": "2026-07-26T00:00:00Z",
+        "updated_at": "2026-07-26T00:00:00Z",
+    }
+    row.update(overrides)
+    return row
+
+
+def _make_fake_request_with_applications(
+    job_present=True, match_present=True, application_rows=None, patch_response_row=None
+):
+    """Extends _make_fake_request's table coverage with `applications`
+    (GET for list/lookup, POST for create, PATCH for status update) --
+    same handler-dispatch pattern, just one more table.
+    """
+    base = _make_fake_request(job_present=job_present, match_present=match_present)
+
+    def handler(method, url, **kwargs):
+        if "/rest/v1/applications" in url:
+            if method == "GET":
+                return httpx.Response(
+                    200, json=application_rows or [], request=httpx.Request(method, url)
+                )
+            if method == "POST":
+                body = kwargs.get("json", {})
+                row = _application_row(notes=body.get("notes"))
+                return httpx.Response(201, json=[row], request=httpx.Request(method, url))
+            if method == "PATCH":
+                row = patch_response_row or _application_row()
+                return httpx.Response(200, json=[row], request=httpx.Request(method, url))
+        return base(method, url, **kwargs)
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/applications"),
+        ("GET", f"/tracks/{FAKE_TRACK_ID}/applications"),
+        ("PATCH", f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}"),
+    ],
+)
+def test_applications_endpoints_require_auth(method, path):
+    # Same reasoning as test_generation_endpoints_require_auth -- these
+    # aren't GET-only so the parametrized 401 check earlier in this file
+    # doesn't cover them (and PATCH needs a body to even reach auth
+    # checking on some frameworks, so send one to be safe).
+    r = client.request(method, path, json={"status": "submitted"} if method == "PATCH" else None)
+    assert r.status_code == 401
+
+
+def test_create_application_success(monkeypatch):
+    fake_request = _make_fake_request_with_applications()
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/applications",
+        json={"notes": "Applying via referral."},
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["status"] == "draft"
+    assert body["job_id"] == FAKE_JOB_ID
+    assert body["cv_track_id"] == FAKE_TRACK_ID
+    assert body["notes"] == "Applying via referral."
+
+
+def test_create_application_no_match_returns_404(monkeypatch):
+    # Same gate as generate-cv: no user_job_matches row means this
+    # job/track pair was never surfaced by a matching run, so creating
+    # an application against it 404s rather than silently allowing it.
+    fake_request = _make_fake_request_with_applications(match_present=False)
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/applications",
+        json={},
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 404
+
+
+def test_list_applications_for_track_joins_job_details(monkeypatch):
+    fake_request = _make_fake_request_with_applications(
+        application_rows=[_application_row(status="submitted", applied_at="2026-07-26T09:00:00Z")]
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.get(
+        f"/tracks/{FAKE_TRACK_ID}/applications",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["status"] == "submitted"
+    assert body[0]["job_title"] == _job_row()["title"]
+    assert body[0]["job_company"] == _job_row()["company"]
+
+
+def test_list_applications_not_owned_track_returns_404(monkeypatch):
+    other_user_id = "00000000-0000-0000-0000-000000000000"
+
+    def handler(method, url, **kwargs):
+        if url.endswith("/auth/v1/user"):
+            return httpx.Response(
+                200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
+            )
+        if "/rest/v1/cv_tracks" in url:
+            return httpx.Response(
+                200, json=[_track_row(user_id=other_user_id)], request=httpx.Request(method, url)
+            )
+        raise AssertionError(f"unexpected {method} {url}")
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: handler("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", handler)
+
+    r = client.get(
+        f"/tracks/{FAKE_TRACK_ID}/applications",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 404
+
+
+def test_update_application_status_success(monkeypatch):
+    updated_row = _application_row(status="submitted", applied_at="2026-07-26T10:00:00Z")
+    fake_request = _make_fake_request_with_applications(
+        application_rows=[_application_row()],  # backs the ownership lookup inside _get_owned_application
+        patch_response_row=updated_row,
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.patch(
+        f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}",
+        json={"status": "submitted"},
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "submitted"
+    assert body["applied_at"] == "2026-07-26T10:00:00Z"
+
+
+def test_update_application_status_not_owned_returns_404(monkeypatch):
+    # Application exists but belongs to a different user -- same
+    # can't-enumerate-other-ids 404 pattern as every other ownership
+    # check in this API (_get_owned_application checks this explicitly,
+    # separately from the track-ownership check).
+    other_user_id = "00000000-0000-0000-0000-000000000000"
+    fake_request = _make_fake_request_with_applications(
+        application_rows=[_application_row(user_id=other_user_id)]
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.patch(
+        f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}",
+        json={"status": "submitted"},
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 404
+
+
+def test_update_application_status_invalid_value_returns_422(monkeypatch):
+    # "hired" isn't a real ApplicationStatus value -- should 422 before
+    # ever reaching the repository, per UpdateApplicationStatusRequest's
+    # own docstring ("a bad value 422s before ever reaching PostgREST's
+    # own check constraint"). Auth still needs a fake response here --
+    # FastAPI resolves the auth dependency before body validation runs
+    # (confirmed by this test originally 500ing on a real network call
+    # before this fake was added), so an unmocked httpx.get would try
+    # to hit the real Supabase auth endpoint instead of ever reaching
+    # the validation error this test is actually checking for.
+    def fake_get(url, **kwargs):
+        if url.endswith("/auth/v1/user"):
+            return httpx.Response(
+                200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
+            )
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    r = client.patch(
+        f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}",
+        json={"status": "hired"},
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 422
