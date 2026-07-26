@@ -82,7 +82,29 @@ class ProfileRepository:
             "proficiency_level": proficiency_level,
             "years_experience": years_experience,
         }
-        rows = self.db.insert("candidate_skills", payload)
+        existing = self.db.select(
+            "candidate_skills",
+            params={
+                "select": "*",
+                "profile_id": f"eq.{profile_id}",
+                "skill_id": f"eq.{skill.id}",
+            },
+        )
+        if existing:
+            # Skill already linked to this profile (e.g. re-uploading a CV
+            # that lists the same skill again) -- update the existing row
+            # instead of inserting a duplicate, which the DB's unique
+            # constraint (candidate_skills_profile_id_skill_id_key) rejects.
+            rows = self.db.update(
+                "candidate_skills",
+                {
+                    "proficiency_level": proficiency_level,
+                    "years_experience": years_experience,
+                },
+                params={"id": f"eq.{existing[0]['id']}"},
+            )
+        else:
+            rows = self.db.insert("candidate_skills", payload)
         result = CandidateSkill.model_validate(rows[0])
         result.skill_name = skill.name
         return result
