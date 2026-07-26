@@ -272,6 +272,9 @@ class CoverLetterStyleSample(BaseModel):
     filename: str
     sample_text: str
     uploaded_at: datetime | None = None
+
+
+class ParsedWorkExperience(BaseModel):
     """One work_experience entry as extracted from raw CV text by the
     LLM. Dates are kept as free-text strings at extraction time (CVs
     write dates wildly inconsistently -- "2019-2021", "Jan 2019 -
