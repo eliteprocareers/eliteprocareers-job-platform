@@ -23,6 +23,7 @@ from uuid import UUID
 
 from eliteprocareers.db.client import SupabaseClient
 from eliteprocareers.jobs.repository import JobRepository
+from eliteprocareers.matching.auto_apply import maybe_auto_apply
 from eliteprocareers.matching.filtering import (
     CriterionResult,
     passes_stage1,
@@ -65,6 +66,7 @@ def run_matching_for_track(
     track_id: UUID,
     db: SupabaseClient | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    organization_id: UUID | None = None,
 ) -> MatchingSummary:
     """Runs Stage-1 + Stage-2 for one CV track against every job
     currently in the `jobs` table.
@@ -76,6 +78,12 @@ def run_matching_for_track(
     SKIPped) gets scored and its match row upserted, even at a low
     score -- a low real score is still useful signal, unlike a
     Stage-1 FAIL which isn't a scoring question at all.
+
+    organization_id (migration 0009): after a passing match is scored,
+    maybe_auto_apply() checks the track's auto-apply config and creates
+    a queued application if it clears the threshold. Best-effort --
+    an auto-apply failure for one job never stops matching for the
+    rest; see maybe_auto_apply's own docstring.
 
     on_progress, if given, is called as on_progress(jobs_done, jobs_total)
     after every job (pass or fail) -- stays a no-op by default so the
@@ -137,6 +145,22 @@ def run_matching_for_track(
             match_score=score,
         )
 
+        try:
+            maybe_auto_apply(
+                db=db,
+                user_id=user_id,
+                track=track,
+                job=job,
+                match_score=score,
+                full_profile=full_profile,
+                organization_id=organization_id,
+            )
+        except Exception:
+            # Best-effort, same reasoning as inside maybe_auto_apply itself
+            # -- an auto-apply problem for one job must never abort
+            # matching for the rest of the ~3000-job run.
+            pass
+
         outcomes.append(
             MatchOutcome(
                 job_id=job.id,
@@ -165,6 +189,7 @@ def run_matching_for_track_tracked(
     track_id: UUID,
     run_id: UUID,
     db: SupabaseClient,
+    organization_id: UUID | None = None,
 ) -> None:
     """Wraps run_matching_for_track with status tracking in matching_runs,
     for the background-task path triggered by POST /tracks/{id}/match.
@@ -187,7 +212,9 @@ def run_matching_for_track_tracked(
         run_repo.update_progress(run_id, jobs_processed=done, jobs_total=total)
 
     try:
-        run_matching_for_track(user_id, track_id, db=db, on_progress=_on_progress)
+        run_matching_for_track(
+            user_id, track_id, db=db, on_progress=_on_progress, organization_id=organization_id
+        )
         run_repo.mark_completed(run_id)
     except Exception as exc:
         run_repo.mark_failed(run_id, str(exc))

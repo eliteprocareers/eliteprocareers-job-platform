@@ -115,6 +115,7 @@ def trigger_matching(
         track_id,
         run.id,
         current_user.db,
+        current_user.organization_id,
     )
     return MatchTriggerResponse(
         track_id=track_id,

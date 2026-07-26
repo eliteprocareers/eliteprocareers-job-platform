@@ -13,7 +13,7 @@ from eliteprocareers.api.schemas import (
 from eliteprocareers.jobs.repository import JobRepository
 from eliteprocareers.profiles.application_repository import ApplicationRepository
 from eliteprocareers.profiles.document_repository import DocumentRepository
-from eliteprocareers.profiles.models import Application, DocType
+from eliteprocareers.profiles.models import Application, ApplicationStatus, DocType
 
 router = APIRouter(prefix="/tracks", tags=["applications"])
 
@@ -87,7 +87,12 @@ def list_applications_for_track(
     """
     _get_owned_track(track_id, current_user)
 
-    applications = ApplicationRepository(current_user.db).list_applications_for_track(track_id)
+    app_repo = ApplicationRepository(current_user.db)
+    applications = app_repo.list_applications_for_track(track_id)
+    # Lazy transition -- any 'queued' row whose undo window has closed
+    # advances to 'ready_to_submit' right here, on read. No cron/background
+    # job for this; see advance_expired_queued's docstring.
+    applications = app_repo.advance_expired_queued(applications)
 
     job_repo = JobRepository(current_user.db)
     jobs_by_id = {
@@ -111,9 +116,42 @@ def list_applications_for_track(
                 job_title=job.title,
                 job_company=job.company,
                 job_url=job.url,
+                auto_applied=a.auto_applied,
+                queued_at=a.queued_at,
+                undo_deadline=a.undo_deadline,
+                failure_reason=a.failure_reason,
             )
         )
     return results
+
+
+@router.post(
+    "/{track_id}/applications/{application_id}/cancel",
+    response_model=Application,
+)
+def cancel_queued_application(
+    track_id: UUID,
+    application_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Application:
+    """Cancel an auto-applied application during its undo window. Only
+    valid while status is still 'queued' -- once the window has closed
+    (status is 'ready_to_submit' or later), there's nothing left to
+    undo automatically; the candidate would need to withdraw manually
+    via update_application_status instead, same as any other
+    application at that point.
+    """
+    application = _get_owned_application(track_id, application_id, current_user)
+    if application.status != ApplicationStatus.queued:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot cancel an application with status '{application.status.value}' "
+                "-- only 'queued' applications (still inside their undo window) can be "
+                "cancelled this way."
+            ),
+        )
+    return ApplicationRepository(current_user.db).cancel_queued_application(application_id)
 
 
 @router.patch(

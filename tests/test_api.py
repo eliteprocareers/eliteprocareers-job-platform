@@ -169,6 +169,8 @@ def test_list_tracks_authenticated(monkeypatch):
                 json={"id": FAKE_USER_ID, "email": "james@example.com"},
                 request=httpx.Request("GET", url),
             )
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request("GET", url))
         if url.endswith("/rest/v1/cv_tracks"):
             return httpx.Response(
                 200,
@@ -203,6 +205,8 @@ def test_get_track_not_owned_returns_404(monkeypatch):
             return httpx.Response(
                 200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
             )
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request("GET", url))
         if "/rest/v1/cv_tracks" in url:
             return httpx.Response(
                 200,
@@ -560,6 +564,8 @@ def test_generate_cv_not_owned_track_returns_404(monkeypatch):
             return httpx.Response(
                 200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
             )
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
         if "/rest/v1/cv_tracks" in url:
             return httpx.Response(
                 200,
@@ -589,6 +595,8 @@ def test_get_documents_bundle_returns_latest_per_type(monkeypatch):
             return httpx.Response(
                 200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
             )
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
         if "/rest/v1/cv_tracks" in url:
             return httpx.Response(
                 200, json=[_track_row()], request=httpx.Request(method, url)
@@ -768,6 +776,8 @@ def test_list_applications_not_owned_track_returns_404(monkeypatch):
             return httpx.Response(
                 200, json={"id": FAKE_USER_ID}, request=httpx.Request("GET", url)
             )
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
         if "/rest/v1/cv_tracks" in url:
             return httpx.Response(
                 200, json=[_track_row(user_id=other_user_id)], request=httpx.Request(method, url)
@@ -841,7 +851,17 @@ def test_update_application_status_invalid_value_returns_422(monkeypatch):
             )
         raise AssertionError(f"unexpected GET {url}")
 
+    def fake_request(method, url, **kwargs):
+        # get_current_user()'s organization_members lookup goes through
+        # db.select() -> httpx.request(), not httpx.get() -- this test
+        # only mocked the latter before organization_members existed,
+        # which silently let the org lookup hit the real network.
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
+        raise AssertionError(f"unexpected {method} {url}")
+
     monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx, "request", fake_request)
 
     r = client.patch(
         f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}",
@@ -849,3 +869,89 @@ def test_update_application_status_invalid_value_returns_422(monkeypatch):
         headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
     )
     assert r.status_code == 422
+
+
+def test_cancel_queued_application_success(monkeypatch):
+    queued_row = _application_row(status="queued", queued_at="2026-07-26T10:00:00Z")
+    cancelled_row = _application_row(status="cancelled", queued_at="2026-07-26T10:00:00Z")
+    fake_request = _make_fake_request_with_applications(
+        application_rows=[queued_row], patch_response_row=cancelled_row
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}/cancel",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "cancelled"
+
+
+def test_cancel_application_wrong_status_returns_400(monkeypatch):
+    # A 'draft' application (the default _application_row status) is
+    # never auto-applied -- there's no undo window to cancel, so this
+    # must reject rather than silently flipping status on something
+    # that was never queued in the first place.
+    fake_request = _make_fake_request_with_applications(
+        application_rows=[_application_row(status="draft")]
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/applications/{FAKE_APPLICATION_ID}/cancel",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 400
+    assert "queued" in r.json()["detail"]
+
+
+def test_list_applications_lazy_transitions_expired_queued_to_ready_to_submit(monkeypatch):
+    # An application queued well in the past, whose undo window has
+    # long since closed -- listing it should flip it to
+    # ready_to_submit on read, with no cron/background job involved.
+    expired_queued_row = _application_row(
+        status="queued",
+        queued_at="2020-01-01T00:00:00Z",
+        undo_deadline="2020-01-01T00:15:00Z",
+    )
+    advanced_row = _application_row(
+        status="ready_to_submit",
+        queued_at="2020-01-01T00:00:00Z",
+        undo_deadline="2020-01-01T00:15:00Z",
+    )
+    fake_request = _make_fake_request_with_applications(
+        application_rows=[expired_queued_row], patch_response_row=advanced_row
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.get(
+        f"/tracks/{FAKE_TRACK_ID}/applications",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["status"] == "ready_to_submit"
+
+
+def test_list_applications_queued_within_window_stays_queued(monkeypatch):
+    # Sanity check for the opposite branch: a queued application whose
+    # deadline hasn't passed yet must NOT be advanced.
+    far_future_row = _application_row(
+        status="queued",
+        queued_at="2026-07-26T10:00:00Z",
+        undo_deadline="2099-01-01T00:00:00Z",
+    )
+    fake_request = _make_fake_request_with_applications(application_rows=[far_future_row])
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    r = client.get(
+        f"/tracks/{FAKE_TRACK_ID}/applications",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 200
+    assert r.json()[0]["status"] == "queued"

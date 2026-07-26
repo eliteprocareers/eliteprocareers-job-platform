@@ -33,6 +33,9 @@ class TrackRepository:
         salary_expectation_min: float | None = None,
         salary_expectation_max: float | None = None,
         salary_currency: str | None = None,
+        auto_apply_enabled: bool = False,
+        auto_apply_min_score: float = 0.85,
+        undo_window_minutes: int | None = 15,
     ) -> CVTrack:
         payload = {
             "user_id": str(user_id),
@@ -51,6 +54,9 @@ class TrackRepository:
             "salary_expectation_min": salary_expectation_min,
             "salary_expectation_max": salary_expectation_max,
             "salary_currency": salary_currency,
+            "auto_apply_enabled": auto_apply_enabled,
+            "auto_apply_min_score": auto_apply_min_score,
+            "undo_window_minutes": undo_window_minutes,
         }
         rows = self.db.insert(self.TABLE, payload)
         return CVTrack.model_validate(rows[0])

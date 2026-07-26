@@ -181,6 +181,15 @@ class CVTrack(BaseModel):
     salary_expectation_max: float | None = None
     salary_currency: str | None = None
 
+    # Auto-apply config (migration 0009). auto_apply_enabled off by
+    # default -- this track behaves exactly as before until a candidate
+    # opts in. undo_window_minutes=None means "manual approval only":
+    # auto_apply_enabled has no effect without an explicit approval
+    # step, enforced in the trigger logic, not by a DB constraint.
+    auto_apply_enabled: bool = False
+    auto_apply_min_score: float = 0.85
+    undo_window_minutes: int | None = 15
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -346,11 +355,15 @@ class ParsedCVProfile(BaseModel):
 
 class ApplicationStatus(str, Enum):
     draft = "draft"
+    queued = "queued"  # auto-created, inside its undo window, cancellable
+    ready_to_submit = "ready_to_submit"  # undo window closed, candidate finishes manually
     submitted = "submitted"
     interviewing = "interviewing"
     rejected = "rejected"
     offer = "offer"
     withdrawn = "withdrawn"
+    needs_attention = "needs_attention"  # an automated step failed, needs a human
+    cancelled = "cancelled"  # candidate cancelled during the undo window
 
 
 class Application(BaseModel):
@@ -370,3 +383,9 @@ class Application(BaseModel):
     notes: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    auto_applied: bool = False
+    queued_at: datetime | None = None
+    undo_deadline: datetime | None = None
+    retry_count: int = 0
+    last_attempt_at: datetime | None = None
+    failure_reason: str | None = None

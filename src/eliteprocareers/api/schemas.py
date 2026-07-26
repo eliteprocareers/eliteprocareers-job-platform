@@ -65,6 +65,9 @@ class CreateTrackRequest(BaseModel):
     salary_expectation_min: float | None = None
     salary_expectation_max: float | None = None
     salary_currency: str | None = None
+    auto_apply_enabled: bool = False
+    auto_apply_min_score: float = 0.85
+    undo_window_minutes: int | None = 15
 
 
 class UpdateTrackRequest(BaseModel):
@@ -88,6 +91,9 @@ class UpdateTrackRequest(BaseModel):
     salary_expectation_min: float | None = None
     salary_expectation_max: float | None = None
     salary_currency: str | None = None
+    auto_apply_enabled: bool | None = None
+    auto_apply_min_score: float | None = None
+    undo_window_minutes: int | None = None
 
 
 class CVUploadTriggerResponse(BaseModel):
@@ -170,3 +176,7 @@ class ApplicationWithJob(BaseModel):
     job_title: str
     job_company: str
     job_url: str | None
+    auto_applied: bool = False
+    queued_at: datetime | None = None
+    undo_deadline: datetime | None = None
+    failure_reason: str | None = None
