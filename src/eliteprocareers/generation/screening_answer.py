@@ -70,6 +70,7 @@ def generate_screening_answer(
     doc_repo: DocumentRepository,
     word_limit: int | None = None,
     job_id=None,
+    organization_id=None,
 ) -> GeneratedDocument:
     """Full pipeline: build prompt -> call LLM -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
@@ -84,5 +85,6 @@ def generate_screening_answer(
         doc_type=DocType.screening_answer,
         content=content,
         job_id=job_id,
+        organization_id=organization_id,
         ai_model_used=GROQ_MODEL,
     )

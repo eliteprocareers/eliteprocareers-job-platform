@@ -65,6 +65,8 @@ def test_cover_letter_sample_upload_success(monkeypatch):
                 json={"id": FAKE_USER_ID, "email": "james@example.com"},
                 request=httpx.Request("GET", url),
             )
+        if "/rest/v1/organization_members" in url:
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
         if "/rest/v1/cover_letter_style_samples" in url:
             if method == "GET":
                 # upsert_sample() checks for an existing row first --
@@ -309,6 +311,15 @@ def _make_fake_request(job_present=True, match_present=True, style_sample_presen
                 json={"id": FAKE_USER_ID, "email": "james@example.com"},
                 request=httpx.Request("GET", url),
             )
+        if "/rest/v1/organization_members" in url:
+            # get_current_user() resolves this on every request as of
+            # origin/main@334eeb9 (multi-tenant orgs) -- no existing test
+            # mocked it, which would have broken every generate-* test
+            # in this file, not just the new ones. Empty here means "no
+            # org membership", i.e. organization_id resolves to None,
+            # matching this suite's existing fixtures/assertions, which
+            # never reference organization_id.
+            return httpx.Response(200, json=[], request=httpx.Request(method, url))
         if "/rest/v1/cv_tracks" in url:
             return httpx.Response(
                 200, json=[_track_row()], request=httpx.Request(method, url)

@@ -65,6 +65,7 @@ def create_application(
         job_id=job_id,
         cv_track_id=track_id,
         notes=payload.notes,
+        organization_id=current_user.organization_id,
     )
 
     doc_repo = DocumentRepository(current_user.db)

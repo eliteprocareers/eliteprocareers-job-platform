@@ -36,6 +36,7 @@ class CurrentUser:
     email: str | None
     access_token: str
     db: SupabaseClient
+    organization_id: UUID | None
 
 
 def get_current_user(
@@ -55,9 +56,25 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    db = SupabaseClient(access_token=token)
+
+    # Multi-tenant orgs (added 2026-07-26): most tables now carry an RLS
+    # policy requiring organization_id to match one of the caller's
+    # memberships (is_org_member(...)). Resolved once per request here so
+    # every repository insert downstream can use it, rather than each one
+    # re-querying or guessing -- added when generate-cv / create_application
+    # were found failing with 403 "new row violates row-level security
+    # policy" because organization_id was never being set on new rows.
+    org_rows = db.select(
+        "organization_members",
+        params={"select": "organization_id", "user_id": f"eq.{user['id']}", "limit": "1"},
+    )
+    organization_id = UUID(org_rows[0]["organization_id"]) if org_rows else None
+
     return CurrentUser(
         id=UUID(user["id"]),
         email=user.get("email"),
         access_token=token,
-        db=SupabaseClient(access_token=token),
+        db=db,
+        organization_id=organization_id,
     )
