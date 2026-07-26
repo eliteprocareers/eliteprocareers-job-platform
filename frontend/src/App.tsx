@@ -8,6 +8,7 @@ import TrackEdit from './pages/TrackEdit';
 import TrackMatches from './pages/TrackMatches';
 import TrackJobDocuments from './pages/TrackJobDocuments';
 import TrackApplications from './pages/TrackApplications';
+import Profile from './pages/Profile';
 
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth();
@@ -19,6 +20,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/tracks" element={<ProtectedRoute><Tracks /></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/tracks/new" element={<ProtectedRoute><TrackCreate /></ProtectedRoute>} />
       <Route path="/tracks/:trackId/edit" element={<ProtectedRoute><TrackEdit /></ProtectedRoute>} />
       <Route path="/tracks/:trackId/matches" element={<ProtectedRoute><TrackMatches /></ProtectedRoute>} />

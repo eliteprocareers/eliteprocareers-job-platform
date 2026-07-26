@@ -72,6 +72,28 @@ export interface MatchWithJob {
   job_location: string | null;
 }
 
+export interface CVUploadTriggerResponse {
+  upload_id: string;
+  filename: string;
+  status: string;
+  message: string;
+}
+
+export type CVUploadStatus = 'processing' | 'completed' | 'failed';
+
+export interface CVUpload {
+  id?: string;
+  user_id: string;
+  filename: string;
+  file_size_bytes: number;
+  status: CVUploadStatus;
+  raw_text?: string | null;
+  fields_extracted?: number | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
 export type DocType = 'cv' | 'cover_letter' | 'screening_answer';
 
 export interface GeneratedDocument {

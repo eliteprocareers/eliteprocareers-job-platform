@@ -30,6 +30,9 @@ export default function Tracks() {
         <h1 className="text-2xl font-semibold text-slate-100">CV Tracks</h1>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-400">{email}</span>
+          <Link to="/profile" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
+            Profile
+          </Link>
           <Link to="/tracks/new" className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded px-4 py-2 font-medium">
             + New Track
           </Link>
