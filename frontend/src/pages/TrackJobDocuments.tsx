@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/api';
 import type {
+  ApplicationStatus,
+  ApplicationWithJob,
   CVContent,
   DocType,
   DocumentsBundle,
@@ -10,6 +12,8 @@ import type {
   MatchWithJob,
   ScreeningAnswerRequest,
 } from '../lib/types';
+import ApplicationStatusBadge from '../components/ApplicationStatusBadge';
+import { APPLICATION_STATUS_LABELS, APPLICATION_STATUS_ORDER } from '../lib/applicationStatus';
 
 interface JobSummary {
   job_title: string;
@@ -206,6 +210,62 @@ export default function TrackJobDocuments() {
     bundleError && (bundleError as { response?: { status?: number } })?.response?.status === 404
   );
 
+  // No single-application-by-job endpoint exists on the backend -- the
+  // only read is the track-wide list (GET /tracks/{track_id}/applications),
+  // same reasoning as the matches fallback above: find this job's row
+  // within it rather than requiring a new endpoint just for this page.
+  const applicationsQueryKey = ['applications', trackId];
+  const { data: applications, isLoading: applicationsLoading } = useQuery({
+    queryKey: applicationsQueryKey,
+    queryFn: async () => {
+      const { data } = await api.get<ApplicationWithJob[]>(`/tracks/${trackId}/applications`);
+      return data;
+    },
+    enabled: !!trackId,
+  });
+  const application = applications?.find((a) => a.job_id === jobId);
+  const [applicationError, setApplicationError] = useState<string | null>(null);
+
+  const createApplicationMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<ApplicationWithJob>(
+        `/tracks/${trackId}/jobs/${jobId}/applications`,
+        {}
+      );
+      return data;
+    },
+    onSuccess: (created) => {
+      setApplicationError(null);
+      queryClient.setQueryData<ApplicationWithJob[]>(applicationsQueryKey, (prev) => [
+        ...(prev ?? []),
+        { ...created, job_title: job?.job_title ?? '', job_company: job?.job_company ?? '', job_url: job?.job_url ?? null },
+      ]);
+      // Creating an application auto-links any already-generated documents
+      // on the backend (application_id column) -- refetch the bundle so
+      // this page reflects that link rather than showing stale state.
+      queryClient.invalidateQueries({ queryKey: bundleQueryKey });
+    },
+    onError: () => setApplicationError('Failed to create application. Try again.'),
+  });
+
+  const updateApplicationStatusMutation = useMutation({
+    mutationFn: async (status: ApplicationStatus) => {
+      if (!application) throw new Error('No application to update');
+      const { data } = await api.patch<ApplicationWithJob>(
+        `/tracks/${trackId}/applications/${application.id}`,
+        { status, notes: application.notes }
+      );
+      return data;
+    },
+    onSuccess: (updated) => {
+      setApplicationError(null);
+      queryClient.setQueryData<ApplicationWithJob[]>(applicationsQueryKey, (prev) =>
+        prev?.map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
+      );
+    },
+    onError: () => setApplicationError('Failed to update status. Try again.'),
+  });
+
   function useGenerateMutation<TReq = void>(docType: DocType, path: string) {
     return useMutation({
       mutationFn: async (payload: TReq) => {
@@ -276,6 +336,57 @@ export default function TrackJobDocuments() {
           list.
         </div>
       )}
+
+      <div className="bg-slate-900 rounded-lg p-4 mb-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-slate-100 font-medium">Application status</h2>
+          {application && <ApplicationStatusBadge status={application.status} />}
+        </div>
+        {applicationsLoading ? (
+          <p className="text-sm text-slate-500 mt-2">Loading...</p>
+        ) : application ? (
+          <div className="mt-3 flex items-center gap-3">
+            <label className="text-sm text-slate-400">
+              Update status:{' '}
+              <select
+                value={application.status}
+                disabled={updateApplicationStatusMutation.isPending}
+                onChange={(e) =>
+                  updateApplicationStatusMutation.mutate(e.target.value as ApplicationStatus)
+                }
+                className="ml-1 bg-slate-800 text-slate-200 rounded px-2 py-1 text-sm"
+              >
+                {APPLICATION_STATUS_ORDER.map((s) => (
+                  <option key={s} value={s}>
+                    {APPLICATION_STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Link
+              to={`/tracks/${trackId}/applications`}
+              className="text-sm text-indigo-400 hover:text-indigo-300"
+            >
+              View all applications
+            </Link>
+          </div>
+        ) : (
+          <div className="mt-3">
+            <p className="text-sm text-slate-500 mb-2">
+              Not tracked yet. This only records status for your own reference — it never submits
+              anything to the employer or an ATS on your behalf.
+            </p>
+            <button
+              onClick={() => createApplicationMutation.mutate()}
+              disabled={createApplicationMutation.isPending || noMatch}
+              className="text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-3 py-2 font-medium"
+            >
+              {createApplicationMutation.isPending ? 'Creating...' : 'Track this application'}
+            </button>
+          </div>
+        )}
+        {applicationError && <p className="text-red-400 text-sm mt-2">{applicationError}</p>}
+      </div>
 
       {bundleLoading && <p className="text-sm text-slate-500 mb-4">Loading saved documents...</p>}
 

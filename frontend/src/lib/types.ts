@@ -98,6 +98,48 @@ export interface DocumentsBundle {
   screening_answer: GeneratedDocument | null;
 }
 
+export type ApplicationStatus =
+  | 'draft'
+  | 'submitted'
+  | 'interviewing'
+  | 'rejected'
+  | 'offer'
+  | 'withdrawn';
+
+export interface Application {
+  id?: string;
+  user_id: string;
+  job_id: string;
+  cv_track_id: string;
+  status: ApplicationStatus;
+  applied_at: string | null;
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ApplicationWithJob {
+  id: string;
+  job_id: string;
+  cv_track_id: string;
+  status: ApplicationStatus;
+  applied_at: string | null;
+  notes: string | null;
+  created_at: string | null;
+  job_title: string;
+  job_company: string;
+  job_url: string | null;
+}
+
+export interface CreateApplicationRequest {
+  notes?: string | null;
+}
+
+export interface UpdateApplicationStatusRequest {
+  status: ApplicationStatus;
+  notes?: string | null;
+}
+
 export interface CVWorkExperienceEntry {
   title: string;
   company: string;

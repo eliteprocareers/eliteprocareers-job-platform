@@ -51,6 +51,12 @@ export default function TrackMatches() {
       <div className="flex justify-between items-center mt-4 mb-2">
         <h1 className="text-2xl font-semibold text-slate-100">Matches</h1>
         <div className="flex items-center gap-3">
+          <Link
+            to={`/tracks/${trackId}/applications`}
+            className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2"
+          >
+            Applications
+          </Link>
           <label className="text-sm text-slate-400">
             Min score:{' '}
             <input type="number" min={0} max={1} step={0.05} value={minScore}
