@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from eliteprocareers.profiles.models import GeneratedDocument
+from eliteprocareers.profiles.models import ApplicationStatus, GeneratedDocument
 
 
 class LoginRequest(BaseModel):
@@ -134,3 +134,39 @@ class DocumentsBundle(BaseModel):
     cv: GeneratedDocument | None = None
     cover_letter: GeneratedDocument | None = None
     screening_answer: GeneratedDocument | None = None
+
+
+class CreateApplicationRequest(BaseModel):
+    """Body for POST /tracks/{track_id}/jobs/{job_id}/applications. Optional
+    free-text notes only -- status always starts at 'draft', job_id/
+    cv_track_id/user_id all come from the path and the authenticated
+    token, never the body, same rule as every other create-request in
+    this API.
+    """
+    notes: str | None = None
+
+
+class UpdateApplicationStatusRequest(BaseModel):
+    """Body for PATCH /tracks/{track_id}/applications/{application_id}.
+    status is validated against ApplicationStatus here so a bad value
+    422s before ever reaching PostgREST's own check constraint.
+    """
+    status: ApplicationStatus
+    notes: str | None = None
+
+
+class ApplicationWithJob(BaseModel):
+    """An applications row joined with the job it points to -- same
+    reasoning as MatchWithJob: Application alone only carries job_id,
+    callers displaying an applications list need title/company/url too.
+    """
+    id: UUID
+    job_id: UUID
+    cv_track_id: UUID
+    status: ApplicationStatus
+    applied_at: datetime | None
+    notes: str | None
+    created_at: datetime | None
+    job_title: str
+    job_company: str
+    job_url: str | None

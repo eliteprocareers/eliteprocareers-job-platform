@@ -67,3 +67,19 @@ class DocumentRepository:
         if not versions:
             return None
         return versions[-1]
+
+    def set_application_id(
+        self, document_id: UUID, application_id: UUID
+    ) -> GeneratedDocument:
+        """Link an already-generated document to an application, once one
+        exists for its (track, job) pair. Called from applications.py right
+        after an application is created -- never on the generate-* path
+        itself, since a document can be generated before any application
+        exists.
+        """
+        rows = self.db.update(
+            self.TABLE,
+            data={"application_id": str(application_id)},
+            params={"id": f"eq.{document_id}"},
+        )
+        return GeneratedDocument.model_validate(rows[0])

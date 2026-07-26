@@ -11,7 +11,7 @@ from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field 
+from pydantic import BaseModel, Field
 
 
 class ProficiencyLevel(str, Enum):
@@ -150,6 +150,8 @@ class FullProfile(BaseModel):
     projects: list[Project] = []
     achievements: list[Achievement] = []
     references: list[Reference] = []
+
+
 class CVTrack(BaseModel):
     """A named CV strategy track (e.g. 'Product Management' vs 'Supply Chain').
 
@@ -181,6 +183,8 @@ class CVTrack(BaseModel):
 
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
 class DocType(str, Enum):
     cv = "cv"
     cover_letter = "cover_letter"
@@ -321,3 +325,31 @@ class ParsedCVProfile(BaseModel):
     certifications: list[ParsedCertification] = Field(default_factory=list)
     languages: list[ParsedLanguage] = Field(default_factory=list)
     projects: list[ParsedProject] = Field(default_factory=list)
+
+
+class ApplicationStatus(str, Enum):
+    draft = "draft"
+    submitted = "submitted"
+    interviewing = "interviewing"
+    rejected = "rejected"
+    offer = "offer"
+    withdrawn = "withdrawn"
+
+
+class Application(BaseModel):
+    """Maps directly to the applications table -- Stage 5 (submission)
+    status tracking. Draft-and-queue model, deliberately: this never
+    submits anything to an employer or ATS on the user's behalf, it only
+    records what stage a real-world application is in. applied_at is set
+    server-side, only the first time status becomes 'submitted' -- never
+    accepted directly from a request body (see ApplicationRepository).
+    """
+    id: UUID | None = None
+    user_id: UUID
+    job_id: UUID
+    cv_track_id: UUID
+    status: ApplicationStatus = ApplicationStatus.draft
+    applied_at: datetime | None = None
+    notes: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
