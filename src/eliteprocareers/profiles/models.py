@@ -257,7 +257,21 @@ class CVUpload(BaseModel):
     completed_at: datetime | None = None
 
 
-class ParsedWorkExperience(BaseModel):
+class CoverLetterStyleSample(BaseModel):
+    """Maps directly to the cover_letter_style_samples table -- a single
+    writing sample per user, used only to steer the TONE/STYLE of future
+    AI-generated cover letters. Deliberately NOT a generated_documents
+    row and never shown to an employer -- per founder decision
+    (2026-07-26), this is a style reference, not a real cover letter.
+    One row per user (unique user_id); a new upload replaces the old
+    sample rather than versioning it. See
+    migrations/0008_add_cover_letter_style_samples.sql.
+    """
+    id: UUID | None = None
+    user_id: UUID
+    filename: str
+    sample_text: str
+    uploaded_at: datetime | None = None
     """One work_experience entry as extracted from raw CV text by the
     LLM. Dates are kept as free-text strings at extraction time (CVs
     write dates wildly inconsistently -- "2019-2021", "Jan 2019 -

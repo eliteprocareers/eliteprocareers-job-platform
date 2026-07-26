@@ -36,11 +36,65 @@ FAKE_JOB_ID = "11111111-1111-1111-1111-111111111111"
         f"/tracks/{FAKE_TRACK_ID}/matches",
         f"/profile/cv-upload-status/{FAKE_UPLOAD_ID}",
         f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/documents",
+        "/profile/cover-letter-sample",
     ],
 )
 def test_protected_routes_require_auth(path):
     r = client.get(path)
     assert r.status_code == 401
+
+
+def test_cover_letter_sample_upload_requires_auth():
+    r = client.post(
+        "/profile/cover-letter-sample",
+        files={"file": ("sample.txt", b"x" * 200, "text/plain")},
+    )
+    assert r.status_code == 401
+
+
+def test_cover_letter_sample_delete_requires_auth():
+    r = client.delete("/profile/cover-letter-sample")
+    assert r.status_code == 401
+
+
+def test_cover_letter_sample_upload_success(monkeypatch):
+    def handler(method, url, **kwargs):
+        if url.endswith("/auth/v1/user"):
+            return httpx.Response(
+                200,
+                json={"id": FAKE_USER_ID, "email": "james@example.com"},
+                request=httpx.Request("GET", url),
+            )
+        if "/rest/v1/cover_letter_style_samples" in url:
+            if method == "GET":
+                # upsert_sample() checks for an existing row first --
+                # none exists yet, so this is a fresh insert.
+                return httpx.Response(200, json=[], request=httpx.Request(method, url))
+            if method == "POST":
+                body = kwargs.get("json", {})
+                saved = {
+                    "id": "44444444-4444-4444-4444-444444444444",
+                    "user_id": FAKE_USER_ID,
+                    "filename": body.get("filename"),
+                    "sample_text": body.get("sample_text"),
+                    "uploaded_at": body.get("uploaded_at"),
+                }
+                return httpx.Response(201, json=[saved], request=httpx.Request(method, url))
+        raise AssertionError(f"unexpected {method} {url}")
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: handler("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", handler)
+
+    sample_text = "Dear Hiring Manager, " + ("I am a great fit. " * 20)
+    r = client.post(
+        "/profile/cover-letter-sample",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        files={"file": ("old_letter.txt", sample_text.encode(), "text/plain")},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["filename"] == "old_letter.txt"
+    assert "I am a great fit." in body["sample_text"]
 
 
 def test_cv_upload_requires_auth():
@@ -218,12 +272,24 @@ def _match_row():
     }
 
 
-def _make_fake_request(job_present=True, match_present=True):
+def _style_sample_row():
+    return {
+        "id": "44444444-4444-4444-4444-444444444444",
+        "user_id": FAKE_USER_ID,
+        "filename": "old_cover_letter.txt",
+        "sample_text": "I am thrilled beyond words to apply for this role!!",
+        "uploaded_at": "2026-07-24T00:00:00Z",
+    }
+
+
+def _make_fake_request(job_present=True, match_present=True, style_sample_present=False):
     """Builds a fake httpx.request()/httpx.get() handler covering every
     Supabase table hit by the generate-* pipeline: auth, cv_tracks,
     user_job_matches (ownership-of-match check), candidate_profiles +
-    its empty related tables, jobs, and generated_documents (both the
-    list_versions read inside create_document and the final insert).
+    its empty related tables, jobs, generated_documents (both the
+    list_versions read inside create_document and the final insert),
+    and cover_letter_style_samples (best-effort fetch before cover
+    letter generation).
     """
     empty_profile_tables = (
         "candidate_skills",
@@ -258,6 +324,9 @@ def _make_fake_request(job_present=True, match_present=True):
             return httpx.Response(200, json=[], request=httpx.Request(method, url))
         if "/rest/v1/jobs" in url:
             payload = [_job_row()] if job_present else []
+            return httpx.Response(200, json=payload, request=httpx.Request(method, url))
+        if "/rest/v1/cover_letter_style_samples" in url:
+            payload = [_style_sample_row()] if style_sample_present else []
             return httpx.Response(200, json=payload, request=httpx.Request(method, url))
         if "/rest/v1/generated_documents" in url:
             if method == "GET":
@@ -344,6 +413,78 @@ def test_generate_cover_letter_success(monkeypatch):
     assert body["doc_type"] == "cover_letter"
     assert body["job_id"] == FAKE_JOB_ID
     assert body["content"].startswith("Dear Hiring Manager,")
+
+
+def test_generate_cover_letter_uses_style_sample_without_persisting_it(monkeypatch):
+    # style_sample_present=True -- simulates a previously uploaded sample
+    fake_request = _make_fake_request(style_sample_present=True)
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    captured_prompts = []
+
+    def fake_groq_post(url, **kwargs):
+        captured_prompts.append(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": "Dear Hiring Manager,\n\n...\n\nSincerely,"}}
+                ]
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_groq_post)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cover-letter",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+
+    # The style sample's own text influenced the prompt sent to the LLM...
+    sent_prompt = str(captured_prompts[0])
+    assert "STYLE REFERENCE TEXT" in sent_prompt
+    assert "I am thrilled beyond words" in sent_prompt
+
+    # ...but never leaked into the saved document itself, and the saved
+    # document is the normal cover_letter type, not anything special.
+    assert "thrilled beyond words" not in body["content"]
+    assert body["doc_type"] == "cover_letter"
+
+
+def test_generate_cover_letter_without_style_sample_unaffected(monkeypatch):
+    # style_sample_present defaults to False -- confirms the existing
+    # no-sample path (test_generate_cover_letter_success above) is
+    # genuinely unchanged by this feature, not just coincidentally passing.
+    fake_request = _make_fake_request()
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: fake_request("GET", url, **kw))
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    captured_prompts = []
+
+    def fake_groq_post(url, **kwargs):
+        captured_prompts.append(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": "Dear Hiring Manager,\n\n...\n\nSincerely,"}}
+                ]
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_groq_post)
+
+    r = client.post(
+        f"/tracks/{FAKE_TRACK_ID}/jobs/{FAKE_JOB_ID}/generate-cover-letter",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert r.status_code == 201
+    assert "STYLE REFERENCE TEXT" not in str(captured_prompts[0])
 
 
 def test_generate_screening_answer_success(monkeypatch):

@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import { api } from '../lib/api';
-import type { CVUpload, CVUploadTriggerResponse } from '../lib/types';
+import type { CVUpload, CVUploadTriggerResponse, CoverLetterStyleSample } from '../lib/types';
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_DURATION_MS = 5 * 60 * 1000;
@@ -11,6 +12,7 @@ const SUPPORTED_EXTENSIONS = ['.pdf', '.docx', '.txt'];
 const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 
 export default function Profile() {
+  const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
@@ -95,6 +97,54 @@ export default function Profile() {
   }
 
   const status = statusQuery.data?.status;
+
+  // --- Cover letter style sample (tone/style reference only -- never a
+  // real cover letter, never shown to an employer) ---
+  const sampleFileInputRef = useRef<HTMLInputElement>(null);
+
+  const sampleQuery = useQuery({
+    queryKey: ['cover-letter-sample'],
+    queryFn: async () => {
+      try {
+        const { data } = await api.get<CoverLetterStyleSample>('/profile/cover-letter-sample');
+        return data;
+      } catch (err) {
+        if (axios.isAxiosError(err) && err.response?.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+
+  const sampleUploadMutation = useMutation({
+    mutationFn: async (selected: File) => {
+      const formData = new FormData();
+      formData.append('file', selected);
+      const { data } = await api.post<CoverLetterStyleSample>(
+        '/profile/cover-letter-sample',
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cover-letter-sample'] });
+      if (sampleFileInputRef.current) sampleFileInputRef.current.value = '';
+    },
+  });
+
+  const sampleDeleteMutation = useMutation({
+    mutationFn: async () => {
+      await api.delete('/profile/cover-letter-sample');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cover-letter-sample'] });
+    },
+  });
+
+  function handleSampleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = e.target.files?.[0] ?? null;
+    if (selected) sampleUploadMutation.mutate(selected);
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 p-8">
@@ -184,6 +234,68 @@ export default function Profile() {
               <p className="text-sm text-red-400">Failed to check status. It may still be processing.</p>
             )}
           </div>
+        )}
+      </div>
+
+      <div className="bg-slate-900 rounded-lg p-6 max-w-xl mt-6">
+        <h2 className="text-sm font-medium text-slate-200 mb-1">Cover letter style sample</h2>
+        <p className="text-sm text-slate-400 mb-4">
+          Upload a past cover letter to steer the tone and voice of future AI-generated ones.
+          This is a style reference only — it's never stored as a real cover letter, never
+          sent to an employer, and its facts are never copied into generated content.
+        </p>
+
+        {sampleQuery.isLoading && (
+          <p className="text-sm text-slate-400">Checking for an existing sample…</p>
+        )}
+
+        {!sampleQuery.isLoading && sampleQuery.data && (
+          <div className="mb-4 flex items-center justify-between bg-slate-800 rounded px-3 py-2">
+            <div>
+              <p className="text-sm text-slate-200">{sampleQuery.data.filename}</p>
+              {sampleQuery.data.uploaded_at && (
+                <p className="text-xs text-slate-500">
+                  Uploaded {new Date(sampleQuery.data.uploaded_at).toLocaleDateString()}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => sampleDeleteMutation.mutate()}
+              disabled={sampleDeleteMutation.isPending}
+              className="text-xs text-red-400 hover:text-red-300 disabled:text-slate-600"
+            >
+              {sampleDeleteMutation.isPending ? 'Removing…' : 'Remove'}
+            </button>
+          </div>
+        )}
+
+        {!sampleQuery.isLoading && !sampleQuery.data && (
+          <p className="text-sm text-slate-500 mb-4">
+            No sample uploaded yet — cover letters use the default professional tone.
+          </p>
+        )}
+
+        <label className="block text-sm text-slate-300 mb-2" htmlFor="sample-file-input">
+          {sampleQuery.data ? 'Replace sample' : 'Choose sample cover letter'}
+        </label>
+        <input
+          id="sample-file-input"
+          ref={sampleFileInputRef}
+          type="file"
+          accept={SUPPORTED_EXTENSIONS.join(',')}
+          onChange={handleSampleFileChange}
+          disabled={sampleUploadMutation.isPending}
+          className="block w-full text-sm text-slate-300 file:mr-4 file:rounded file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-slate-200 hover:file:bg-slate-700"
+        />
+
+        {sampleUploadMutation.isPending && (
+          <p className="text-sm text-amber-400 mt-2">Uploading…</p>
+        )}
+        {sampleUploadMutation.isError && (
+          <p className="text-sm text-red-400 mt-2">Upload failed. Check the file and try again.</p>
+        )}
+        {sampleUploadMutation.isSuccess && (
+          <p className="text-sm text-emerald-400 mt-2">Sample saved.</p>
         )}
       </div>
     </div>

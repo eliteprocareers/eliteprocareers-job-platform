@@ -94,6 +94,14 @@ export interface CVUpload {
   completed_at?: string | null;
 }
 
+export interface CoverLetterStyleSample {
+  id?: string;
+  user_id: string;
+  filename: string;
+  sample_text: string;
+  uploaded_at?: string | null;
+}
+
 export type DocType = 'cv' | 'cover_letter' | 'screening_answer';
 
 export interface GeneratedDocument {

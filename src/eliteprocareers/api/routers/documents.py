@@ -10,6 +10,7 @@ from eliteprocareers.generation.cv_tailoring import generate_tailored_cv
 from eliteprocareers.generation.screening_answer import generate_screening_answer
 from eliteprocareers.jobs.repository import JobRepository
 from eliteprocareers.matching.repository import UserJobMatchRepository
+from eliteprocareers.profiles.cover_letter_sample_repository import CoverLetterStyleSampleRepository
 from eliteprocareers.profiles.document_repository import DocumentRepository
 from eliteprocareers.profiles.models import DocType, GeneratedDocument
 from eliteprocareers.profiles.repository import ProfileRepository
@@ -91,6 +92,12 @@ def generate_cover_letter_for_job(
     track, job = _get_owned_job_with_match(track_id, job_id, current_user)
     profile = _get_profile_or_400(current_user)
 
+    # Best-effort -- no style sample uploaded yet is a normal state, not
+    # an error; generate_cover_letter falls back to its default tone.
+    style_sample = CoverLetterStyleSampleRepository(current_user.db).get_sample(
+        current_user.id
+    )
+
     doc_repo = DocumentRepository(current_user.db)
     document = generate_cover_letter(
         profile=profile,
@@ -98,6 +105,7 @@ def generate_cover_letter_for_job(
         job_description=job.description or "",
         doc_repo=doc_repo,
         job_id=job_id,
+        style_sample_text=style_sample.sample_text if style_sample else None,
     )
     return document
 

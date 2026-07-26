@@ -12,7 +12,12 @@ from eliteprocareers.profiles.document_repository import DocumentRepository
 from eliteprocareers.profiles.models import CVTrack, DocType, FullProfile, GeneratedDocument
 
 
-def build_cover_letter_prompt(profile: FullProfile, track: CVTrack, job_description: str) -> str:
+def build_cover_letter_prompt(
+    profile: FullProfile,
+    track: CVTrack,
+    job_description: str,
+    style_sample_text: str | None = None,
+) -> str:
     skills_text = ", ".join(s.skill_name for s in profile.skills if s.skill_name)
 
     work_lines = []
@@ -22,6 +27,24 @@ def build_cover_letter_prompt(profile: FullProfile, track: CVTrack, job_descript
             f"- {w.title} at {w.company} ({w.start_date} to {end}): {w.description or ''}"
         )
     work_text = "\n".join(work_lines)
+
+    style_instruction = ""
+    if style_sample_text:
+        # Truncated -- this is a tone/style reference, not something the
+        # LLM needs verbatim in full to pick up voice, and keeping the
+        # prompt bounded matters more here than completeness.
+        sample_excerpt = style_sample_text[:3000]
+        style_instruction = f"""
+
+WRITING STYLE REFERENCE: The candidate has provided a past cover letter
+as a style reference below. Match its tone, voice, and general
+sentence rhythm (e.g. formal vs conversational, short vs long
+sentences) -- but do NOT copy any specific facts, claims, employer
+names, or achievements from it. Every factual claim in your output
+must still come only from the candidate profile above.
+
+STYLE REFERENCE TEXT:
+{sample_excerpt}"""
 
     return f"""You are writing a cover letter for a specific job application.
 
@@ -35,6 +58,7 @@ CANDIDATE WORK EXPERIENCE:
 
 JOB DESCRIPTION TO WRITE FOR:
 {job_description}
+{style_instruction}
 
 Write a professional cover letter tailored to this job description, using
 ONLY real information from the candidate's profile above — do not invent
@@ -54,11 +78,16 @@ def generate_cover_letter(
     job_description: str,
     doc_repo: DocumentRepository,
     job_id=None,
+    style_sample_text: str | None = None,
 ) -> GeneratedDocument:
     """Full pipeline: build prompt -> call LLM -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
+
+    style_sample_text is optional and, when present, is used only to
+    influence tone/voice in the prompt (see build_cover_letter_prompt) --
+    it is never itself persisted as part of the generated document.
     """
-    prompt = build_cover_letter_prompt(profile, track, job_description)
+    prompt = build_cover_letter_prompt(profile, track, job_description, style_sample_text)
     raw_response = generate_text(prompt, temperature=0.7)
     content = raw_response.strip()
 
