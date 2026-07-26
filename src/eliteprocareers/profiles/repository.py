@@ -130,7 +130,27 @@ class ProfileRepository:
 
     def add_work_experience(self, profile_id: UUID, **fields) -> WorkExperience:
         payload = {"profile_id": str(profile_id), **fields}
-        rows = self.db.insert("work_experience", payload)
+        existing = self.db.select(
+            "work_experience",
+            params={
+                "select": "*",
+                "profile_id": f"eq.{profile_id}",
+                "company": f"eq.{fields.get('company')}",
+                "title": f"eq.{fields.get('title')}",
+            },
+        )
+        if existing:
+            # Same company+title already on this profile (e.g. re-uploading
+            # a CV that lists the same role again) -- update instead of
+            # inserting a duplicate. No DB constraint blocks this like
+            # candidate_skills does, so duplicates were piling up silently
+            # instead of erroring, diluting generated CVs with repeated,
+            # near-identical entries.
+            rows = self.db.update(
+                "work_experience", payload, params={"id": f"eq.{existing[0]['id']}"}
+            )
+        else:
+            rows = self.db.insert("work_experience", payload)
         return WorkExperience.model_validate(rows[0])
 
     def list_work_experience(self, profile_id: UUID) -> list[WorkExperience]:
@@ -143,7 +163,21 @@ class ProfileRepository:
 
     def add_education(self, profile_id: UUID, **fields) -> Education:
         payload = {"profile_id": str(profile_id), **fields}
-        rows = self.db.insert("education", payload)
+        existing = self.db.select(
+            "education",
+            params={
+                "select": "*",
+                "profile_id": f"eq.{profile_id}",
+                "institution": f"eq.{fields.get('institution')}",
+                "degree": f"eq.{fields.get('degree')}",
+            },
+        )
+        if existing:
+            rows = self.db.update(
+                "education", payload, params={"id": f"eq.{existing[0]['id']}"}
+            )
+        else:
+            rows = self.db.insert("education", payload)
         return Education.model_validate(rows[0])
 
     def list_education(self, profile_id: UUID) -> list[Education]:
@@ -156,7 +190,20 @@ class ProfileRepository:
 
     def add_certification(self, profile_id: UUID, **fields) -> Certification:
         payload = {"profile_id": str(profile_id), **fields}
-        rows = self.db.insert("certifications", payload)
+        existing = self.db.select(
+            "certifications",
+            params={
+                "select": "*",
+                "profile_id": f"eq.{profile_id}",
+                "name": f"eq.{fields.get('name')}",
+            },
+        )
+        if existing:
+            rows = self.db.update(
+                "certifications", payload, params={"id": f"eq.{existing[0]['id']}"}
+            )
+        else:
+            rows = self.db.insert("certifications", payload)
         return Certification.model_validate(rows[0])
 
     def list_certifications(self, profile_id: UUID) -> list[Certification]:
@@ -169,7 +216,20 @@ class ProfileRepository:
 
     def add_language(self, profile_id: UUID, **fields) -> Language:
         payload = {"profile_id": str(profile_id), **fields}
-        rows = self.db.insert("languages", payload)
+        existing = self.db.select(
+            "languages",
+            params={
+                "select": "*",
+                "profile_id": f"eq.{profile_id}",
+                "language": f"eq.{fields.get('language')}",
+            },
+        )
+        if existing:
+            rows = self.db.update(
+                "languages", payload, params={"id": f"eq.{existing[0]['id']}"}
+            )
+        else:
+            rows = self.db.insert("languages", payload)
         return Language.model_validate(rows[0])
 
     def list_languages(self, profile_id: UUID) -> list[Language]:
