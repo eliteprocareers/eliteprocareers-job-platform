@@ -24,6 +24,7 @@ class DocumentRepository:
         cv_track_id: UUID,
         doc_type: DocType,
         content: str,
+        organization_id: UUID | None = None,
         job_id: UUID | None = None,
         ai_model_used: str | None = None,
         application_id: UUID | None = None,
@@ -37,6 +38,7 @@ class DocumentRepository:
         payload = {
             "user_id": str(user_id),
             "cv_track_id": str(cv_track_id),
+            "organization_id": str(organization_id) if organization_id else None,
             "job_id": str(job_id) if job_id else None,
             "application_id": str(application_id) if application_id else None,
             "doc_type": doc_type.value,

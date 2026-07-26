@@ -74,6 +74,7 @@ def generate_cv_for_job(
         job_description=job.description or "",
         doc_repo=doc_repo,
         job_id=job_id,
+        organization_id=current_user.organization_id,
     )
     return document
 
@@ -98,6 +99,7 @@ def generate_cover_letter_for_job(
         job_description=job.description or "",
         doc_repo=doc_repo,
         job_id=job_id,
+        organization_id=current_user.organization_id,
     )
     return document
 
@@ -125,6 +127,7 @@ def generate_screening_answer_for_job(
         doc_repo=doc_repo,
         word_limit=payload.word_limit,
         job_id=job_id,
+        organization_id=current_user.organization_id,
     )
     return document
 

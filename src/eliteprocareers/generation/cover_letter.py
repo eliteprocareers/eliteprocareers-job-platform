@@ -54,6 +54,7 @@ def generate_cover_letter(
     job_description: str,
     doc_repo: DocumentRepository,
     job_id=None,
+    organization_id=None,
 ) -> GeneratedDocument:
     """Full pipeline: build prompt -> call LLM -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
@@ -68,5 +69,6 @@ def generate_cover_letter(
         doc_type=DocType.cover_letter,
         content=content,
         job_id=job_id,
+        organization_id=organization_id,
         ai_model_used=GROQ_MODEL,
     )

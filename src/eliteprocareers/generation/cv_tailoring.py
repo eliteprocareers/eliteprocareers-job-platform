@@ -113,6 +113,7 @@ def generate_tailored_cv(
     job_description: str,
     doc_repo: DocumentRepository,
     job_id=None,
+    organization_id=None,
 ) -> GeneratedDocument:
     """Full pipeline: build prompt -> call LLM -> parse -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
@@ -127,5 +128,6 @@ def generate_tailored_cv(
         doc_type=DocType.cv,
         content=cv_content.to_json(),
         job_id=job_id,
+        organization_id=organization_id,
         ai_model_used=GROQ_MODEL,
     )

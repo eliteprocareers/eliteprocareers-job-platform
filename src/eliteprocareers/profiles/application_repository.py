@@ -26,11 +26,13 @@ class ApplicationRepository:
         job_id: UUID,
         cv_track_id: UUID,
         notes: str | None = None,
+        organization_id: UUID | None = None,
     ) -> Application:
         payload = {
             "user_id": str(user_id),
             "job_id": str(job_id),
             "cv_track_id": str(cv_track_id),
+            "organization_id": str(organization_id) if organization_id else None,
             "status": ApplicationStatus.draft.value,
             "notes": notes,
         }
