@@ -60,14 +60,33 @@ Rewrite the candidate's CV content to best match this job description, using
 ONLY real information from the candidate's profile above — do not invent
 experience, skills, or credentials that aren't listed.
 
+IMPORTANT — preserve substance, don't just compress: the candidate's real
+work experience above is often detailed and specific (concrete numbers,
+scope, named responsibilities). Tailoring means choosing which of those
+real details to lead with and how to frame them for this job — it does
+NOT mean shrinking each role down to two or three generic-sounding
+bullets. For each role in CANDIDATE WORK EXPERIENCE:
+- Include 4 to 6 bullets, not 2 to 3, whenever the source description
+  supports that many distinct, real points.
+- Keep concrete numbers, scope, and named tools/frameworks from the
+  source description (e.g. portfolio size, percentages, team size,
+  named systems) rather than smoothing them into vaguer language.
+- If the source description groups the role into logical subsections
+  (e.g. "Team Leadership", "Revenue & Portfolio Performance"), preserve
+  that grouping as bullet clusters rather than flattening everything
+  into one undifferentiated list.
+- Still prioritize and reorder toward what's most relevant to the job
+  description above -- tailoring is about emphasis and selection, not
+  about deleting real, substantive detail to make the CV shorter.
+
 Respond with ONLY valid JSON (no markdown, no code fences, no commentary)
 matching exactly this shape:
 
 {{
-  "summary": "2-3 sentence professional summary tailored to this job",
+  "summary": "3-4 sentence professional summary tailored to this job, keeping the candidate's real, specific achievements (not just generic claims)",
   "skills": ["skill1", "skill2", ...],
   "work_experience": [
-    {{"title": "...", "company": "...", "dates": "...", "bullets": ["...", "..."]}}
+    {{"title": "...", "company": "...", "dates": "...", "bullets": ["...", "...", "...", "..."]}}
   ],
   "education": ["degree, institution", ...],
   "certifications": ["cert name, issuer", ...]
