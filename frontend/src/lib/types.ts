@@ -184,3 +184,91 @@ export interface CVContent {
   education: string[];
   certifications: string[];
 }
+
+// ---------------------------------------------------------------------
+// Organizations / invites (Phase 4)
+// ---------------------------------------------------------------------
+
+export type OrgType =
+  | 'individual'
+  | 'agency'
+  | 'staffing_firm'
+  | 'company'
+  | 'university'
+  | 'career_coaching_firm'
+  | 'enterprise';
+
+export type MemberRole = 'owner' | 'admin' | 'member';
+
+// Roles that can actually be granted via invite -- deliberately
+// excludes 'owner', matching the backend's InvitableRole.
+export type InvitableRole = 'admin' | 'member';
+
+export type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+export interface Organization {
+  id: string;
+  name: string;
+  org_type: OrgType;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationMember {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  role: MemberRole;
+  created_at: string;
+}
+
+// Admin-facing view of an invite -- deliberately has no `token` field.
+// The token is only ever present on OrganizationInviteCreated, right
+// after creation -- see that type and the backend comment it mirrors.
+export interface OrganizationInvite {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: InvitableRole;
+  status: InviteStatus;
+  invited_by: string;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+}
+
+export interface OrganizationInviteCreated extends OrganizationInvite {
+  token: string;
+}
+
+// Unauthenticated-safe preview by token, backed by get_invite_preview().
+export interface InvitePreview {
+  organization_name: string;
+  email: string;
+  role: InvitableRole;
+  status: InviteStatus;
+  expires_at: string;
+}
+
+export interface CreateOrganizationRequest {
+  name: string;
+  org_type: OrgType;
+}
+
+export interface CreateInviteRequest {
+  email: string;
+  role: InvitableRole;
+}
+
+export interface SignupRequest {
+  email: string;
+  password: string;
+}
+
+export interface SignupResponse {
+  user_id: string;
+  email: string | null;
+  access_token: string | null;
+  refresh_token: string | null;
+  requires_confirmation: boolean;
+}

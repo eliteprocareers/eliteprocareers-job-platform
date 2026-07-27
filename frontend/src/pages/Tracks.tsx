@@ -33,6 +33,9 @@ export default function Tracks() {
           <Link to="/profile" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
             Profile
           </Link>
+          <Link to="/organization" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
+            Organization
+          </Link>
           <Link to="/tracks/new" className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded px-4 py-2 font-medium">
             + New Track
           </Link>

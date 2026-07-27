@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -10,6 +10,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get('redirect') || '/tracks';
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -17,7 +19,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate('/tracks');
+      navigate(redirectTo);
     } catch (err: any) {
       setError(err?.response?.data?.detail ?? 'Login failed');
     } finally {
@@ -44,6 +46,15 @@ export default function Login() {
           className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded py-2 font-medium">
           {loading ? 'Signing in...' : 'Sign in'}
         </button>
+        <p className="text-sm text-slate-400 text-center">
+          Don't have an account?{' '}
+          <Link
+            to={`/signup${redirectTo !== '/tracks' ? `?redirect=${encodeURIComponent(redirectTo)}` : ''}`}
+            className="text-indigo-400 hover:text-indigo-300"
+          >
+            Sign up
+          </Link>
+        </p>
       </form>
     </div>
   );
