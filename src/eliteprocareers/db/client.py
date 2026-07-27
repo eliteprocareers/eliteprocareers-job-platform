@@ -123,3 +123,23 @@ class SupabaseClient:
             "DELETE", table, headers={"Prefer": "return=representation"}, params=params
         )
         return response.json()
+
+    def rpc(self, function_name: str, params: dict | None = None) -> Any:
+        """Call a Postgres function via PostgREST's /rpc/{function_name}.
+
+        Used for operations that must be atomic across more than one
+        table (e.g. accept_organization_invite claiming an invite and
+        inserting a membership row in one transaction) -- the same
+        class of bug this project has hit twice already (profiles/
+        repository.py's pre-fix blind inserts) from doing multi-step
+        writes as separate REST calls with no transaction wrapping them.
+
+        SECURITY DEFINER functions run with the *function's* privileges,
+        not the caller's, but auth.uid()/auth.jwt() inside the function
+        body still resolve from whichever token this client was built
+        with -- so calling with a user-scoped client (the normal case)
+        still ties the operation to that specific user, it just also
+        gets to bypass RLS policies the function itself doesn't need.
+        """
+        response = self._request("POST", f"rpc/{function_name}", json=params or {})
+        return response.json()

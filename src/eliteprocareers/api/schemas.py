@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from eliteprocareers.organizations.models import InvitableRole, OrgType
 from eliteprocareers.profiles.models import ApplicationStatus, GeneratedDocument
 
 
@@ -23,6 +24,26 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     user_id: str
     email: str | None = None
+
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class SignupResponse(BaseModel):
+    """access_token/refresh_token are None if the Supabase project has
+    email confirmation enabled -- the account exists but isn't usable
+    until the person clicks the confirmation link, then logs in
+    separately via POST /auth/login. requires_confirmation tells the
+    frontend which case it's in without it having to guess from
+    null-ness alone.
+    """
+    user_id: str
+    email: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    requires_confirmation: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -159,6 +180,28 @@ class UpdateApplicationStatusRequest(BaseModel):
     """
     status: ApplicationStatus
     notes: str | None = None
+
+
+class CreateOrganizationRequest(BaseModel):
+    """Body for POST /organizations. Rejected server-side (RPC-level,
+    not just here) if the caller already belongs to an org -- see
+    create_organization_with_owner() in migration 0010.
+    """
+    name: str
+    org_type: OrgType = OrgType.individual
+
+
+class CreateInviteRequest(BaseModel):
+    """Body for POST /organizations/invites. Admin/owner only, enforced
+    by RLS (is_org_admin), not just the endpoint's own auth check.
+    """
+    email: EmailStr
+    role: InvitableRole = InvitableRole.member
+
+
+class AcceptInviteRequest(BaseModel):
+    """Body for POST /organizations/invites/accept."""
+    token: str
 
 
 class ApplicationWithJob(BaseModel):
