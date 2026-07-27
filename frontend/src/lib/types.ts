@@ -220,6 +220,7 @@ export interface OrganizationMember {
   user_id: string;
   role: MemberRole;
   created_at: string;
+  email: string;
 }
 
 // Admin-facing view of an invite -- deliberately has no `token` field.

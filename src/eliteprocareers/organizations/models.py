@@ -58,6 +58,12 @@ class OrganizationMember(BaseModel):
     user_id: UUID
     role: MemberRole
     created_at: datetime
+    # Backed by list_organization_members_with_email() (migration
+    # 0012) -- organization_members itself has no email column, and
+    # PostgREST can't reach the auth schema for a client-side join.
+    # Any org member can see this for fellow members, matching the
+    # existing membership-visibility RLS policy this extends.
+    email: str
 
 
 class OrganizationInvite(BaseModel):

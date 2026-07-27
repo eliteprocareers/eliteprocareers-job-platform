@@ -73,9 +73,16 @@ class OrganizationRepository:
     # ------------------------------------------------------------------
 
     def list_members(self, organization_id: UUID) -> list[OrganizationMember]:
-        rows = self.db.select(
-            self.MEMBER_TABLE,
-            params={"select": "*", "organization_id": f"eq.{organization_id}"},
+        """Uses list_organization_members_with_email() (migration 0012)
+        rather than a plain select against organization_members --
+        that table has no email column, and PostgREST can't reach the
+        auth schema for a join. The function itself re-checks
+        is_org_member() and simply returns no rows for a non-member,
+        same fail-closed behavior as the RLS SELECT policy it extends
+        (verified directly against production, not assumed).
+        """
+        rows = self.db.rpc(
+            "list_organization_members_with_email", {"p_organization_id": str(organization_id)}
         )
         return [OrganizationMember.model_validate(r) for r in rows]
 

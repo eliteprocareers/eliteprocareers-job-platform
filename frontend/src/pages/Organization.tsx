@@ -26,10 +26,6 @@ const STATUS_COLORS: Record<string, string> = {
   expired: 'text-slate-500',
 };
 
-function shortId(id: string) {
-  return id.slice(0, 8);
-}
-
 export default function Organization() {
   const { email, logout, userId } = useAuth();
   const navigate = useNavigate();
@@ -182,16 +178,13 @@ export default function Organization() {
             {membersQuery.data?.map((m) => (
               <li key={m.id} className="flex justify-between items-center text-sm bg-slate-800 rounded px-3 py-2">
                 <span className="text-slate-200">
-                  {shortId(m.user_id)}
+                  {m.email}
                   {m.user_id === userId && <span className="text-slate-500"> (you)</span>}
                 </span>
                 <span className="text-slate-400 capitalize">{m.role}</span>
               </li>
             ))}
           </ul>
-          <p className="text-xs text-slate-500 mt-3">
-            Showing member IDs -- displaying member emails isn't wired up yet.
-          </p>
         </div>
 
         {/* Invites -- admins/owners only */}
