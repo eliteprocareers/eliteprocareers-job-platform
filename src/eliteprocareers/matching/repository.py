@@ -222,3 +222,27 @@ class MatchingRunRepository:
         if not rows:
             return None
         return MatchingRun.model_validate(rows[0])
+
+    def get_running_run_for_track(self, cv_track_id):
+        """Any matching_runs row still in-flight (status='running') for
+        this track. Used by trigger_matching to refuse starting a second
+        overlapping run -- two concurrent runs on the same track raced
+        auto-apply's idempotency check for the same job in production on
+        2026-07-27, producing duplicate applications until
+        uq_applications_track_job (migration 0010) caught it at the DB
+        level. This closes the root cause the constraint only patches
+        around.
+        """
+        rows = self.db.select(
+            self.TABLE,
+            params={
+                "select": "*",
+                "cv_track_id": f"eq.{cv_track_id}",
+                "status": "eq.running",
+                "order": "started_at.desc",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            return None
+        return MatchingRun.model_validate(rows[0])

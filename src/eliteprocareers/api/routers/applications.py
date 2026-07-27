@@ -60,7 +60,24 @@ def create_application(
     """
     _get_owned_job_with_match(track_id, job_id, current_user)
 
-    application = ApplicationRepository(current_user.db).create_application(
+    app_repo = ApplicationRepository(current_user.db)
+
+    # uq_applications_track_job (migration 0010) enforces this at the DB
+    # level too, but a pre-check here lets us return a clean 409 instead
+    # of a raw DB error -- this is a direct user action (e.g. double-
+    # clicking "Apply"), not a background race, so it deserves a real
+    # error message rather than a 500.
+    existing = app_repo.get_application_for_job_and_track(job_id, track_id)
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"An application already exists for this job on this track "
+                f"(application_id={existing.id}, status={existing.status.value})."
+            ),
+        )
+
+    application = app_repo.create_application(
         user_id=current_user.id,
         job_id=job_id,
         cv_track_id=track_id,

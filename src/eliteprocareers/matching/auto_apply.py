@@ -17,7 +17,7 @@ applications for jobs already handled.
 """
 from uuid import UUID
 
-from eliteprocareers.db.client import SupabaseClient
+from eliteprocareers.db.client import SupabaseClient, SupabaseError
 from eliteprocareers.jobs.models import Job
 from eliteprocareers.profiles.application_repository import ApplicationRepository
 from eliteprocareers.profiles.document_repository import DocumentRepository
@@ -63,13 +63,24 @@ def maybe_auto_apply(
     if existing is not None:
         return False
 
-    application = app_repo.create_queued_application(
-        user_id=user_id,
-        job_id=job.id,
-        cv_track_id=track.id,
-        undo_window_minutes=track.undo_window_minutes,
-        organization_id=organization_id,
-    )
+    try:
+        application = app_repo.create_queued_application(
+            user_id=user_id,
+            job_id=job.id,
+            cv_track_id=track.id,
+            undo_window_minutes=track.undo_window_minutes,
+            organization_id=organization_id,
+        )
+    except SupabaseError as e:
+        # uq_applications_track_job (migration 0010) rejected this insert
+        # -- another concurrent matching run (or a manual apply) won the
+        # race and already created an application for this exact
+        # (track, job) pair between our check above and this insert.
+        # Not a real failure: back off quietly instead of crashing this
+        # job's iteration of the matching run.
+        if "409" in str(e) and "23505" in str(e):
+            return False
+        raise
 
     doc_repo = DocumentRepository(db)
     try:

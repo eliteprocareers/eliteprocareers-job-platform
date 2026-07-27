@@ -106,9 +106,20 @@ def trigger_matching(
     client-side timed-poll workaround against .../matches.
     """
     track = _get_owned_track(track_id, current_user)
-    run = MatchingRunRepository(current_user.db).create_run(
-        user_id=current_user.id, cv_track_id=track_id
-    )
+
+    run_repo = MatchingRunRepository(current_user.db)
+    existing_run = run_repo.get_running_run_for_track(track_id)
+    if existing_run is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"A matching run (run_id={existing_run.id}) is already in "
+                f"progress for this track. Poll GET /tracks/{track_id}/"
+                f"match-status/{existing_run.id} instead of starting a new one."
+            ),
+        )
+
+    run = run_repo.create_run(user_id=current_user.id, cv_track_id=track_id)
     background_tasks.add_task(
         run_matching_for_track_tracked,
         current_user.id,
