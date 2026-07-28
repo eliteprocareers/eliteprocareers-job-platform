@@ -9,6 +9,7 @@ from eliteprocareers.api.schemas import (
     AcceptInviteRequest,
     CreateInviteRequest,
     CreateOrganizationRequest,
+    UpdateMemberRoleRequest,
 )
 from eliteprocareers.db.client import SupabaseError
 from eliteprocareers.organizations.models import (
@@ -127,6 +128,101 @@ def _require_admin_role(current_user: CurrentUser, organization_id: UUID) -> Non
 def list_members(current_user: CurrentUser = Depends(get_current_user)) -> list[OrganizationMember]:
     organization_id = _require_org(current_user)
     return OrganizationRepository(current_user.db).list_members(organization_id)
+
+
+def _require_owner_role(current_user: CurrentUser, organization_id: UUID) -> None:
+    """Stricter than _require_admin_role -- used specifically for
+    operations touching another member's 'owner' status. RLS
+    (is_org_admin, migration 0007) treats owner and admin as equally
+    privileged for these tables, which would let an admin remove or
+    demote an owner -- deliberately narrowed here at the app layer,
+    since that's a real privilege-escalation-adjacent gap, not a
+    hypothetical one. Not a fix to the RLS policy itself (that's a
+    bigger, separate decision) -- just doesn't let this app surface
+    make it worse.
+    """
+    rows = current_user.db.select(
+        "organization_members",
+        params={
+            "select": "role",
+            "organization_id": f"eq.{organization_id}",
+            "user_id": f"eq.{current_user.id}",
+        },
+    )
+    if not rows or rows[0]["role"] != MemberRole.owner.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an organization owner can do this.",
+        )
+
+
+@router.delete("/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_member(
+    member_id: UUID, current_user: CurrentUser = Depends(get_current_user)
+) -> None:
+    """Admin/owner only (RLS is_org_admin). Two guards on top of that,
+    checked before the delete, not left to RLS alone:
+      - the org's last owner can never be removed (would orphan it --
+        nothing in the schema stops that otherwise, confirmed by
+        reading is_org_admin()'s definition directly).
+      - removing an owner at all requires the caller to themselves be
+        an owner (see _require_owner_role) -- an admin can remove
+        members and other admins, not owners.
+    """
+    organization_id = _require_org(current_user)
+    _require_admin_role(current_user, organization_id)
+
+    repo = OrganizationRepository(current_user.db)
+    target_role = repo.get_member_role(organization_id, member_id)
+    if target_role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    if target_role == MemberRole.owner.value:
+        _require_owner_role(current_user, organization_id)
+        if repo.count_owners(organization_id) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Can't remove the organization's last owner.",
+            )
+
+    repo.remove_member(organization_id, member_id)
+
+
+@router.patch("/members/{member_id}/role", response_model=OrganizationMember)
+def update_member_role(
+    member_id: UUID,
+    payload: UpdateMemberRoleRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> OrganizationMember:
+    """Same guard shape as remove_member: admin/owner can change a
+    member's or admin's role; only an owner can grant or revoke
+    'owner' status on someone else, and the last owner can never be
+    demoted away from 'owner' (checked whether it's a self-demotion or
+    someone else doing it).
+    """
+    organization_id = _require_org(current_user)
+    _require_admin_role(current_user, organization_id)
+
+    repo = OrganizationRepository(current_user.db)
+    target_role = repo.get_member_role(organization_id, member_id)
+    if target_role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    involves_owner = target_role == MemberRole.owner.value or payload.role == MemberRole.owner
+    if involves_owner:
+        _require_owner_role(current_user, organization_id)
+
+    if target_role == MemberRole.owner.value and payload.role != MemberRole.owner:
+        if repo.count_owners(organization_id) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Can't demote the organization's last owner.",
+            )
+
+    updated = repo.update_member_role(organization_id, member_id, payload.role.value)
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+    return updated
 
 
 @router.post("/invites", response_model=OrganizationInviteCreated, status_code=status.HTTP_201_CREATED)

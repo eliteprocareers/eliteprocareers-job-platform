@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from eliteprocareers.organizations.models import InvitableRole, OrgType
+from eliteprocareers.organizations.models import InvitableRole, MemberRole, OrgType
 from eliteprocareers.profiles.models import ApplicationStatus, GeneratedDocument
 
 
@@ -202,6 +202,16 @@ class CreateInviteRequest(BaseModel):
 class AcceptInviteRequest(BaseModel):
     """Body for POST /organizations/invites/accept."""
     token: str
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    """Body for PATCH /organizations/members/{member_id}/role. Accepts
+    the full MemberRole set (including 'owner') -- unlike invites,
+    which can only ever grant admin/member -- but granting or removing
+    'owner' is gated at the router level to owners-only, and the last
+    owner can never be demoted. See organizations.py.
+    """
+    role: MemberRole
 
 
 class ApplicationWithJob(BaseModel):

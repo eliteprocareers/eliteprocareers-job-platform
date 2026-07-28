@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import type {
   CreateInviteRequest,
   InvitableRole,
+  MemberRole,
   Organization as OrganizationType,
   OrganizationInvite,
   OrganizationInviteCreated,
@@ -17,6 +18,12 @@ import type {
 const INVITABLE_ROLES: { value: InvitableRole; label: string }[] = [
   { value: 'member', label: 'Member' },
   { value: 'admin', label: 'Admin' },
+];
+
+const ASSIGNABLE_ROLES: { value: MemberRole; label: string }[] = [
+  { value: 'member', label: 'Member' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'owner', label: 'Owner' },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -93,6 +100,36 @@ export default function Organization() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['organization-invites'] });
+    },
+  });
+
+  const [memberActionError, setMemberActionError] = useState<string | null>(null);
+
+  const removeMemberMutation = useMutation({
+    mutationFn: async (memberId: string) => {
+      await api.delete(`/organizations/members/${memberId}`);
+    },
+    onSuccess: () => {
+      setMemberActionError(null);
+      queryClient.invalidateQueries({ queryKey: ['organization-members'] });
+    },
+    onError: (err) => {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setMemberActionError(detail ?? 'Could not remove member');
+    },
+  });
+
+  const updateRoleMutation = useMutation({
+    mutationFn: async ({ memberId, role }: { memberId: string; role: MemberRole }) => {
+      await api.patch(`/organizations/members/${memberId}/role`, { role });
+    },
+    onSuccess: () => {
+      setMemberActionError(null);
+      queryClient.invalidateQueries({ queryKey: ['organization-members'] });
+    },
+    onError: (err) => {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setMemberActionError(detail ?? 'Could not update role');
     },
   });
 
@@ -174,16 +211,59 @@ export default function Organization() {
           <h2 className="text-lg font-medium text-slate-100 mb-4">Members</h2>
           {membersQuery.isLoading && <p className="text-sm text-slate-400">Loading members...</p>}
           {membersQuery.isError && <p className="text-sm text-red-400">Failed to load members.</p>}
+          {memberActionError && <p className="text-sm text-red-400 mb-2">{memberActionError}</p>}
           <ul className="space-y-2">
-            {membersQuery.data?.map((m) => (
-              <li key={m.id} className="flex justify-between items-center text-sm bg-slate-800 rounded px-3 py-2">
-                <span className="text-slate-200">
-                  {m.email}
-                  {m.user_id === userId && <span className="text-slate-500"> (you)</span>}
-                </span>
-                <span className="text-slate-400 capitalize">{m.role}</span>
-              </li>
-            ))}
+            {membersQuery.data?.map((m) => {
+              const isSelf = m.user_id === userId;
+              // Client-side guard mirrors the backend's, for UX only --
+              // the backend re-checks all of this itself (see
+              // _require_owner_role and the last-owner guards in
+              // organizations.py) and is the real authorization
+              // boundary. Only owners can touch another owner's role;
+              // nobody edits themselves through this panel.
+              const canManage = isAdmin && !isSelf && (m.role !== 'owner' || currentMember?.role === 'owner');
+              return (
+                <li key={m.id} className="flex justify-between items-center text-sm bg-slate-800 rounded px-3 py-2">
+                  <span className="text-slate-200">
+                    {m.email}
+                    {isSelf && <span className="text-slate-500"> (you)</span>}
+                  </span>
+                  {canManage ? (
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={m.role}
+                        onChange={(e) =>
+                          updateRoleMutation.mutate({ memberId: m.id, role: e.target.value as MemberRole })
+                        }
+                        disabled={updateRoleMutation.isPending}
+                        className="rounded bg-slate-900 text-slate-200 text-xs px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {ASSIGNABLE_ROLES.filter((r) => r.value !== 'owner' || currentMember?.role === 'owner').map(
+                          (r) => (
+                            <option key={r.value} value={r.value}>
+                              {r.label}
+                            </option>
+                          )
+                        )}
+                      </select>
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Remove ${m.email} from the organization?`)) {
+                            removeMemberMutation.mutate(m.id);
+                          }
+                        }}
+                        disabled={removeMemberMutation.isPending}
+                        className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 capitalize">{m.role}</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
 

@@ -86,6 +86,62 @@ class OrganizationRepository:
         )
         return [OrganizationMember.model_validate(r) for r in rows]
 
+    def get_member_role(self, organization_id: UUID, member_id: UUID) -> str | None:
+        """Internal-only lookup (no email) -- used by the router's own
+        orphan/privilege guards before a remove or role-change, not
+        exposed as an API response shape.
+        """
+        rows = self.db.select(
+            self.MEMBER_TABLE,
+            params={"select": "role", "id": f"eq.{member_id}", "organization_id": f"eq.{organization_id}"},
+        )
+        if not rows:
+            return None
+        return rows[0]["role"]
+
+    def count_owners(self, organization_id: UUID) -> int:
+        """Used to block removing/demoting the org's last owner -- RLS
+        (is_org_admin, migration 0007) permits owners and admins alike
+        to delete/update organization_members rows, but has no concept
+        of 'don't orphan the org' built in. That guard lives here, at
+        the app layer, checked before every remove/role-change call.
+        """
+        rows = self.db.select(
+            self.MEMBER_TABLE,
+            params={"select": "id", "organization_id": f"eq.{organization_id}", "role": "eq.owner"},
+        )
+        return len(rows)
+
+    def remove_member(self, organization_id: UUID, member_id: UUID) -> bool:
+        """Caller is responsible for the orphan/privilege checks (see
+        organizations.py router's remove_member endpoint) -- this is
+        the mechanical delete only, relying on RLS (is_org_admin) as
+        the actual authorization boundary, same as revoke_invite.
+        """
+        rows = self.db.delete(
+            self.MEMBER_TABLE,
+            params={"id": f"eq.{member_id}", "organization_id": f"eq.{organization_id}"},
+        )
+        return bool(rows)
+
+    def update_member_role(
+        self, organization_id: UUID, member_id: UUID, new_role: str
+    ) -> OrganizationMember | None:
+        """Same split as remove_member -- guards live in the router,
+        this is the mechanical update. Re-fetches with email afterward
+        (list_organization_members_with_email doesn't take a single-
+        member filter, so this does one extra round trip rather than
+        adding a second RPC variant for a single row)."""
+        rows = self.db.update(
+            self.MEMBER_TABLE,
+            data={"role": new_role},
+            params={"id": f"eq.{member_id}", "organization_id": f"eq.{organization_id}"},
+        )
+        if not rows:
+            return None
+        members = self.list_members(organization_id)
+        return next((m for m in members if str(m.id) == str(member_id)), None)
+
     # ------------------------------------------------------------------
     # Invites -- admin-facing (normal RLS via is_org_admin)
     # ------------------------------------------------------------------
