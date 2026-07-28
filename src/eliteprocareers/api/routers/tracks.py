@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from eliteprocareers.api.dependencies import CurrentUser, get_current_user
 from eliteprocareers.api.schemas import (
@@ -18,26 +18,71 @@ router = APIRouter(prefix="/tracks", tags=["tracks"])
 
 
 @router.get("", response_model=list[CVTrack])
-def list_my_tracks(current_user: CurrentUser = Depends(get_current_user)) -> list[CVTrack]:
-    """All CV tracks belonging to the authenticated user."""
-    return TrackRepository(current_user.db).list_tracks(current_user.id)
+def list_my_tracks(
+    candidate_user_id: UUID | None = Query(
+        default=None,
+        description=(
+            "List a specific candidate's tracks instead of the caller's own "
+            "-- for an org admin/owner, or a manager/staff specifically "
+            "assigned to that candidate (migration 0015). Omit to list the "
+            "caller's own tracks, the original and still-default behavior."
+        ),
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[CVTrack]:
+    """All CV tracks belonging to the authenticated user, or (if
+    candidate_user_id is provided) belonging to that candidate --
+    visibility is entirely RLS's job (can_view_org_resource(), migration
+    0015), same as every other read in this router now. Asking for a
+    candidate_user_id the caller can't see just returns an empty list,
+    not an error -- RLS filters the underlying select, this endpoint
+    doesn't need its own permission check on top of that.
+    """
+    target_user_id = candidate_user_id if candidate_user_id is not None else current_user.id
+    return TrackRepository(current_user.db).list_tracks(target_user_id)
 
 
-def _get_owned_track(track_id: UUID, current_user: CurrentUser) -> CVTrack:
-    """Fetch a track and verify it belongs to current_user.
+def _get_visible_track(track_id: UUID, current_user: CurrentUser) -> CVTrack:
+    """Fetch a track the caller is allowed to see or manage.
 
-    get_track() itself has no user filter (it's a plain id lookup), so
-    ownership must be checked here explicitly -- returns 404 either way
-    (track missing, or exists but belongs to someone else) rather than a
-    403, so a caller can't use the distinction to enumerate other users'
-    track ids.
+    get_track() itself has no user filter (it's a plain id lookup) --
+    visibility is entirely RLS's job (can_view_org_resource(), migration
+    0015): the caller's own tracks, or an org admin/owner, or (if
+    sharing_mode='full') any org member, or a manager/staff specifically
+    assigned to this track's candidate. If RLS returned the row at all,
+    the caller is allowed to see and manage it -- there is deliberately
+    NO additional `track.user_id != current_user.id` check here anymore.
+
+    That check used to exist and was, in effect, silently overriding
+    migration 0015's RLS loosening: RLS started permitting assigned
+    managers/staff to see a candidate's tracks, but this function kept
+    rejecting anyone except the track's literal owner regardless, so
+    nothing about assigned-only visibility was actually reachable
+    through the API until this fix. Renamed from _get_owned_track to
+    _get_visible_track to name what it actually checks now -- kept as
+    the single choke point every other router (applications.py,
+    documents.py, matches.py) already goes through, so fixing it here
+    fixes all of them at once.
+
+    Still 404s (not None-returns) for a track that doesn't exist OR
+    isn't visible to this caller -- same can't-enumerate-other-users'-
+    ids reasoning as before, just no longer a stricter check than RLS
+    itself already enforces.
     """
     track = TrackRepository(current_user.db).get_track(track_id)
-    if track is None or track.user_id != current_user.id:
+    if track is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="CV track not found."
         )
     return track
+
+
+# Old name kept as an alias -- applications.py, documents.py, matches.py
+# all import _get_owned_track by that name; renaming the import sites
+# too is a larger diff than this fix needs to make, and the alias
+# keeps the two files honest about being the same function rather than
+# risking a copy-paste drift between them.
+_get_owned_track = _get_visible_track
 
 
 @router.get("/{track_id}", response_model=CVTrack)
@@ -104,6 +149,21 @@ def trigger_matching(
     run to BackgroundTasks. Poll GET /tracks/{track_id}/match-status/
     {run_id} for real completion status -- replaces the earlier
     client-side timed-poll workaround against .../matches.
+
+    Scope boundary, deliberate (2026-07-28): unlike every other
+    endpoint in this router, this one is NOT yet assignment-aware.
+    run_repo.create_run() and run_matching_for_track_tracked() both
+    still use current_user.id, not track.user_id -- fine for the
+    normal self-service case (they're the same value), but for an
+    assigned manager/staff triggering a run on an assigned candidate's
+    track, this would misattribute the resulting user_job_matches rows
+    to the staff member instead of the candidate. Also, matching_runs
+    itself has no organization_id column and RLS restricted to
+    user_id = auth.uid() only (confirmed by reading it directly) --
+    so even fixing the user_id here wouldn't let the candidate or other
+    assigned staff poll the run's status afterward. Needs real design
+    work in matching_service.py, not a one-line change -- not done
+    this session, flagged rather than silently left looking finished.
     """
     track = _get_owned_track(track_id, current_user)
 

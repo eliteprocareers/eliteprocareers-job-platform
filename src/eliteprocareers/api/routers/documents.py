@@ -19,15 +19,24 @@ router = APIRouter(prefix="/tracks", tags=["documents"])
 
 
 def _get_owned_job_with_match(track_id: UUID, job_id: UUID, current_user: CurrentUser):
-    """Verify the track is owned by current_user, a match exists for
-    (user, job, track), and the job itself exists. 404 in every failure
+    """Verify the track is visible to current_user (see
+    tracks.py::_get_visible_track), a match exists for (the track's
+    owner, job, track), and the job itself exists. 404 in every failure
     case, same can't-enumerate-other-ids reasoning as the rest of this
     API. Returns (track, job).
+
+    Looks up the match under track.user_id, not current_user.id --
+    those differ exactly when an assigned manager/staff is generating
+    documents on an assigned candidate's behalf (migration 0015), and
+    the match row itself always belongs to the candidate, never the
+    staff member acting on it. Using current_user.id here would silently
+    404 for every assigned-staff case, even after the track visibility
+    fix -- found by tracing this call chain end to end, not assumed.
     """
     track = _get_owned_track(track_id, current_user)
 
     match = UserJobMatchRepository(current_user.db).get_match(
-        user_id=current_user.id, job_id=job_id, cv_track_id=track_id
+        user_id=track.user_id, job_id=job_id, cv_track_id=track_id
     )
     if match is None:
         raise HTTPException(
@@ -42,8 +51,20 @@ def _get_owned_job_with_match(track_id: UUID, job_id: UUID, current_user: Curren
     return track, jobs[0]
 
 
-def _get_profile_or_400(current_user: CurrentUser):
-    profile = ProfileRepository(current_user.db).get_full_profile(current_user.id)
+def _get_profile_or_400(user_id: UUID, current_user: CurrentUser):
+    """Fetch the profile document generation should actually use.
+
+    Takes user_id explicitly (the resource owner -- almost always
+    track.user_id from the caller, not current_user.id) rather than
+    assuming the caller IS the candidate. Generating a CV/cover letter/
+    screening answer on an assigned candidate's behalf needs THEIR
+    profile data, not the staff member generating it -- generate_tailored_
+    cv already independently gets this right for the resulting
+    document's ownership (uses track.user_id, confirmed by reading
+    generation/cv_tailoring.py directly); this was the one remaining
+    place still assuming self-service only.
+    """
+    profile = ProfileRepository(current_user.db).get_full_profile(user_id)
     if profile is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -66,7 +87,7 @@ def generate_cv_for_job(
     track+job pair. Requires an existing match and a completed profile.
     """
     track, job = _get_owned_job_with_match(track_id, job_id, current_user)
-    profile = _get_profile_or_400(current_user)
+    profile = _get_profile_or_400(track.user_id, current_user)
 
     doc_repo = DocumentRepository(current_user.db)
     document = generate_tailored_cv(
@@ -91,12 +112,16 @@ def generate_cover_letter_for_job(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> GeneratedDocument:
     track, job = _get_owned_job_with_match(track_id, job_id, current_user)
-    profile = _get_profile_or_400(current_user)
+    profile = _get_profile_or_400(track.user_id, current_user)
 
     # Best-effort -- no style sample uploaded yet is a normal state, not
     # an error; generate_cover_letter falls back to its default tone.
+    # track.user_id, not current_user.id -- same reasoning as the
+    # profile lookup above: this cover letter is written for the
+    # candidate, so it should reflect THEIR style sample, not whichever
+    # staff member happened to trigger the generation.
     style_sample = CoverLetterStyleSampleRepository(current_user.db).get_sample(
-        current_user.id
+        track.user_id
     )
 
     doc_repo = DocumentRepository(current_user.db)
@@ -124,7 +149,7 @@ def generate_screening_answer_for_job(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> GeneratedDocument:
     track, job = _get_owned_job_with_match(track_id, job_id, current_user)
-    profile = _get_profile_or_400(current_user)
+    profile = _get_profile_or_400(track.user_id, current_user)
 
     doc_repo = DocumentRepository(current_user.db)
     document = generate_screening_answer(

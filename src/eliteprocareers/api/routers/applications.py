@@ -21,18 +21,21 @@ router = APIRouter(prefix="/tracks", tags=["applications"])
 def _get_owned_application(
     track_id: UUID, application_id: UUID, current_user: CurrentUser
 ) -> Application:
-    """Verify the track is owned by current_user and the application
-    belongs to both that track and that user -- 404 in every failure
-    case, same can't-enumerate-other-ids reasoning as the rest of this
-    API.
+    """Verify the track is visible to current_user (_get_owned_track,
+    now really _get_visible_track -- see tracks.py) and the application
+    belongs to that track. 404 in every failure case, same can't-
+    enumerate-other-ids reasoning as the rest of this API.
+
+    No longer re-checks application.user_id != current_user.id on top
+    of that -- applications carries the same can_view_org_resource RLS
+    (migration 0015) as cv_tracks, so if the row was returned at all,
+    the caller is allowed to see and manage it. That extra check used
+    to silently override RLS's assigned-only loosening here too, same
+    bug as tracks.py's old _get_owned_track.
     """
     _get_owned_track(track_id, current_user)
     application = ApplicationRepository(current_user.db).get_application(application_id)
-    if (
-        application is None
-        or application.user_id != current_user.id
-        or application.cv_track_id != track_id
-    ):
+    if application is None or application.cv_track_id != track_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Application not found."
         )
@@ -58,7 +61,7 @@ def create_application(
     via application_id (best-effort -- a document that doesn't exist yet
     just isn't linked, not an error).
     """
-    _get_owned_job_with_match(track_id, job_id, current_user)
+    track, _job = _get_owned_job_with_match(track_id, job_id, current_user)
 
     app_repo = ApplicationRepository(current_user.db)
 
@@ -77,8 +80,13 @@ def create_application(
             ),
         )
 
+    # track.user_id, not current_user.id -- the application belongs to
+    # the candidate the track is for, same reasoning as document
+    # generation (documents.py) -- an assigned manager/staff creating
+    # this on a candidate's behalf shouldn't have it attributed to
+    # themselves.
     application = app_repo.create_application(
-        user_id=current_user.id,
+        user_id=track.user_id,
         job_id=job_id,
         cv_track_id=track_id,
         notes=payload.notes,
