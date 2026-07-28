@@ -37,6 +37,16 @@ class CurrentUser:
     access_token: str
     db: SupabaseClient
     organization_id: UUID | None
+    organization_role: str | None
+    """One of 'owner'/'admin'/'manager'/'staff' (migration 0014), or
+    None if organization_id is also None. Resolved once here so every
+    router can call organizations/permissions.py's has_permission()/
+    require_permission() against it directly, instead of each router
+    re-fetching the caller's own membership row to find their role --
+    which is exactly the duplicated pattern _require_admin_role and
+    _require_owner_role in api/routers/organizations.py had before
+    this, now centralized.
+    """
 
 
 def get_current_user(
@@ -65,11 +75,17 @@ def get_current_user(
     # re-querying or guessing -- added when generate-cv / create_application
     # were found failing with 403 "new row violates row-level security
     # policy" because organization_id was never being set on new rows.
+    #
+    # role resolved in the same query (added with the 4-tier RBAC system,
+    # migration 0014) for the same reason -- one source of truth per
+    # request, not a re-fetch in every router that needs to know who's
+    # allowed to do what.
     org_rows = db.select(
         "organization_members",
-        params={"select": "organization_id", "user_id": f"eq.{user['id']}", "limit": "1"},
+        params={"select": "organization_id,role", "user_id": f"eq.{user['id']}", "limit": "1"},
     )
     organization_id = UUID(org_rows[0]["organization_id"]) if org_rows else None
+    organization_role = org_rows[0]["role"] if org_rows else None
 
     return CurrentUser(
         id=UUID(user["id"]),
@@ -77,4 +93,5 @@ def get_current_user(
         access_token=token,
         db=db,
         organization_id=organization_id,
+        organization_role=organization_role,
     )

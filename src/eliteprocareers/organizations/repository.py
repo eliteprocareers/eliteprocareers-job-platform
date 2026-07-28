@@ -68,6 +68,41 @@ class OrganizationRepository:
             return None
         return Organization.model_validate(rows[0])
 
+    def update_organization(
+        self, organization_id: UUID, name: str | None, org_type: str | None
+    ) -> Organization | None:
+        """RLS (is_org_admin, migration 0007) already gates this --
+        the UPDATE policy on organizations existed since 0007 but,
+        like the members DELETE/UPDATE policies, was never wired up
+        in application code until now. Only includes fields that were
+        actually provided (partial update), so leaving one field out
+        of the request doesn't clobber it with a default.
+        """
+        data: dict = {}
+        if name is not None:
+            data["name"] = name
+        if org_type is not None:
+            data["org_type"] = org_type
+        if not data:
+            return self.get_organization(organization_id)
+        rows = self.db.update(self.ORG_TABLE, data=data, params={"id": f"eq.{organization_id}"})
+        if not rows:
+            return None
+        return Organization.model_validate(rows[0])
+
+    def leave_organization(self) -> UUID:
+        """Atomic -- see leave_organization() in migration 0013. Exists
+        because the DELETE RLS policy on organization_members only
+        permits is_org_admin(), which means a plain member couldn't
+        remove themselves at all otherwise -- confirmed by reading
+        that policy directly, not assumed. Enforces the same
+        last-owner orphan guard as the admin-driven remove/demote
+        paths. Raises SupabaseError with the function's own message if
+        the caller isn't a member, or is the org's last owner.
+        """
+        organization_id = self.db.rpc("leave_organization", {})
+        return UUID(organization_id)
+
     # ------------------------------------------------------------------
     # Members
     # ------------------------------------------------------------------

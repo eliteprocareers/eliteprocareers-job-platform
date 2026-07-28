@@ -198,11 +198,11 @@ export type OrgType =
   | 'career_coaching_firm'
   | 'enterprise';
 
-export type MemberRole = 'owner' | 'admin' | 'member';
+export type MemberRole = 'owner' | 'admin' | 'manager' | 'staff';
 
 // Roles that can actually be granted via invite -- deliberately
 // excludes 'owner', matching the backend's InvitableRole.
-export type InvitableRole = 'admin' | 'member';
+export type InvitableRole = 'admin' | 'manager' | 'staff';
 
 export type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
 

@@ -196,12 +196,22 @@ class CreateInviteRequest(BaseModel):
     by RLS (is_org_admin), not just the endpoint's own auth check.
     """
     email: EmailStr
-    role: InvitableRole = InvitableRole.member
+    role: InvitableRole = InvitableRole.staff
 
 
 class AcceptInviteRequest(BaseModel):
     """Body for POST /organizations/invites/accept."""
     token: str
+
+
+class UpdateOrganizationRequest(BaseModel):
+    """Body for PATCH /organizations. Both fields optional -- a partial
+    update, so renaming doesn't require re-sending org_type and vice
+    versa. Admin/owner only, enforced by RLS (is_org_admin), same as
+    every other admin-gated org write.
+    """
+    name: str | None = None
+    org_type: OrgType | None = None
 
 
 class UpdateMemberRoleRequest(BaseModel):

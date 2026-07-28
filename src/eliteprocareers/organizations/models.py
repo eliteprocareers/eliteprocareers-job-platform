@@ -25,7 +25,8 @@ class OrgType(str, Enum):
 class MemberRole(str, Enum):
     owner = "owner"
     admin = "admin"
-    member = "member"
+    manager = "manager"
+    staff = "staff"
 
 
 class InvitableRole(str, Enum):
@@ -34,7 +35,8 @@ class InvitableRole(str, Enum):
     """
 
     admin = "admin"
-    member = "member"
+    manager = "manager"
+    staff = "staff"
 
 
 class InviteStatus(str, Enum):

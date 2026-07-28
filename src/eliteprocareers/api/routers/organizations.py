@@ -10,6 +10,7 @@ from eliteprocareers.api.schemas import (
     CreateInviteRequest,
     CreateOrganizationRequest,
     UpdateMemberRoleRequest,
+    UpdateOrganizationRequest,
 )
 from eliteprocareers.db.client import SupabaseError
 from eliteprocareers.organizations.models import (
@@ -20,6 +21,7 @@ from eliteprocareers.organizations.models import (
     OrganizationInviteCreated,
     OrganizationMember,
 )
+from eliteprocareers.organizations.permissions import Permission, require_permission
 from eliteprocareers.organizations.repository import OrganizationRepository
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -33,9 +35,10 @@ def _friendly_supabase_error(exc: SupabaseError, fallback_status: int) -> HTTPEx
     of letting main.py's global handler flatten every SupabaseError
     into a generic 502 "Upstream data error". Postgres exceptions
     raised inside our SECURITY DEFINER functions (create_organization_
-    with_owner, accept_organization_invite) carry a real, safe-to-show
-    message -- e.g. "You already belong to an organization." -- that's
-    worth surfacing, unlike a raw RLS/constraint error.
+    with_owner, accept_organization_invite, leave_organization) carry
+    a real, safe-to-show message -- e.g. "You already belong to an
+    organization." -- that's worth surfacing, unlike a raw RLS/
+    constraint error.
     """
     raw = str(exc)
     http_status = fallback_status
@@ -58,6 +61,15 @@ def _friendly_supabase_error(exc: SupabaseError, fallback_status: int) -> HTTPEx
     return HTTPException(status_code=http_status, detail=message)
 
 
+def _require_org(current_user: CurrentUser) -> UUID:
+    if current_user.organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You don't belong to an organization yet.",
+        )
+    return current_user.organization_id
+
+
 @router.post("", response_model=Organization, status_code=status.HTTP_201_CREATED)
 def create_organization(
     payload: CreateOrganizationRequest,
@@ -66,7 +78,9 @@ def create_organization(
     """Creates a new organization with the caller as owner. Atomic --
     see create_organization_with_owner() in migration 0010. Fails with
     a 409 if the caller already belongs to an org (one org per user,
-    for now -- see that migration's comments on why).
+    for now -- see that migration's comments on why). No permission
+    check here -- this is how someone *gets* a role in the first
+    place, there's nothing to check permissions against yet.
     """
     try:
         return OrganizationRepository(current_user.db).create_organization(
@@ -81,96 +95,79 @@ def get_my_organization(current_user: CurrentUser = Depends(get_current_user)) -
     """The authenticated user's organization. 404 if they don't belong
     to one yet -- the frontend should treat that as "show the create-
     organization flow", same as profile.py's get_my_profile treats a
-    missing profile as "show the CV upload flow".
+    missing profile as "show the CV upload flow". No permission check
+    beyond org membership itself -- every role can see their own org.
     """
-    if current_user.organization_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="You don't belong to an organization yet.",
-        )
-    org = OrganizationRepository(current_user.db).get_organization(current_user.organization_id)
+    organization_id = _require_org(current_user)
+    org = OrganizationRepository(current_user.db).get_organization(organization_id)
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
     return org
 
 
-def _require_org(current_user: CurrentUser) -> UUID:
-    if current_user.organization_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="You don't belong to an organization yet.",
-        )
-    return current_user.organization_id
-
-
-def _require_admin_role(current_user: CurrentUser, organization_id: UUID) -> None:
-    """Pre-check for a clean 403 before hitting the DB, on top of (not
-    instead of) the RLS is_org_admin() policy that enforces this for
-    real -- same defense-in-depth as every other admin-gated write in
-    this API relying on RLS as the actual source of truth.
+@router.patch("", response_model=Organization)
+def update_organization(
+    payload: UpdateOrganizationRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Organization:
+    """Requires manage_org_settings (owner/admin -- see
+    organizations/permissions.py's ROLE_PERMISSIONS). RLS
+    (is_org_admin) has permitted this since migration 0007's UPDATE
+    policy on organizations -- just never had an application endpoint
+    calling it until now.
     """
-    rows = current_user.db.select(
-        "organization_members",
-        params={
-            "select": "role",
-            "organization_id": f"eq.{organization_id}",
-            "user_id": f"eq.{current_user.id}",
-        },
+    require_permission(current_user, Permission.manage_org_settings)
+    organization_id = _require_org(current_user)
+    org_type_value = payload.org_type.value if payload.org_type is not None else None
+    updated = OrganizationRepository(current_user.db).update_organization(
+        organization_id, name=payload.name, org_type=org_type_value
     )
-    if not rows or rows[0]["role"] not in (MemberRole.owner.value, MemberRole.admin.value):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only an organization owner or admin can do this.",
-        )
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
+    return updated
+
+
+@router.post("/leave", status_code=status.HTTP_204_NO_CONTENT)
+def leave_organization(current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Self-service, no particular permission required beyond being a
+    member at all -- this is a member removing themselves, not
+    managing someone else. See leave_organization() in migration 0013
+    for why this needed its own RPC rather than reusing DELETE
+    /organizations/members/{id}: the DELETE RLS policy on
+    organization_members is admin-only, so a plain staff/manager
+    member has no other way to leave at all.
+    """
+    try:
+        OrganizationRepository(current_user.db).leave_organization()
+    except SupabaseError as exc:
+        raise _friendly_supabase_error(exc, fallback_status=status.HTTP_409_CONFLICT) from exc
 
 
 @router.get("/members", response_model=list[OrganizationMember])
 def list_members(current_user: CurrentUser = Depends(get_current_user)) -> list[OrganizationMember]:
+    require_permission(current_user, Permission.view_members)
     organization_id = _require_org(current_user)
     return OrganizationRepository(current_user.db).list_members(organization_id)
-
-
-def _require_owner_role(current_user: CurrentUser, organization_id: UUID) -> None:
-    """Stricter than _require_admin_role -- used specifically for
-    operations touching another member's 'owner' status. RLS
-    (is_org_admin, migration 0007) treats owner and admin as equally
-    privileged for these tables, which would let an admin remove or
-    demote an owner -- deliberately narrowed here at the app layer,
-    since that's a real privilege-escalation-adjacent gap, not a
-    hypothetical one. Not a fix to the RLS policy itself (that's a
-    bigger, separate decision) -- just doesn't let this app surface
-    make it worse.
-    """
-    rows = current_user.db.select(
-        "organization_members",
-        params={
-            "select": "role",
-            "organization_id": f"eq.{organization_id}",
-            "user_id": f"eq.{current_user.id}",
-        },
-    )
-    if not rows or rows[0]["role"] != MemberRole.owner.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only an organization owner can do this.",
-        )
 
 
 @router.delete("/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_member(
     member_id: UUID, current_user: CurrentUser = Depends(get_current_user)
 ) -> None:
-    """Admin/owner only (RLS is_org_admin). Two guards on top of that,
-    checked before the delete, not left to RLS alone:
+    """Requires manage_members (owner/admin). Two guards on top of
+    that, checked before the delete, not left to RLS or the permission
+    check alone:
       - the org's last owner can never be removed (would orphan it --
         nothing in the schema stops that otherwise, confirmed by
         reading is_org_admin()'s definition directly).
-      - removing an owner at all requires the caller to themselves be
-        an owner (see _require_owner_role) -- an admin can remove
-        members and other admins, not owners.
+      - removing an owner at all requires manage_owners (owner-only --
+        see organizations/permissions.py; RLS's is_org_admin() treats
+        owner and admin as equally privileged for this table, which
+        would let an admin remove an owner if this app-layer check
+        didn't narrow it).
     """
+    require_permission(current_user, Permission.manage_members)
     organization_id = _require_org(current_user)
-    _require_admin_role(current_user, organization_id)
 
     repo = OrganizationRepository(current_user.db)
     target_role = repo.get_member_role(organization_id, member_id)
@@ -178,7 +175,7 @@ def remove_member(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
 
     if target_role == MemberRole.owner.value:
-        _require_owner_role(current_user, organization_id)
+        require_permission(current_user, Permission.manage_owners)
         if repo.count_owners(organization_id) <= 1:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -194,14 +191,14 @@ def update_member_role(
     payload: UpdateMemberRoleRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> OrganizationMember:
-    """Same guard shape as remove_member: admin/owner can change a
-    member's or admin's role; only an owner can grant or revoke
-    'owner' status on someone else, and the last owner can never be
-    demoted away from 'owner' (checked whether it's a self-demotion or
-    someone else doing it).
+    """Same guard shape as remove_member: manage_members (owner/admin)
+    can change a staff/manager/admin's role; manage_owners (owner-only)
+    is required to grant or revoke 'owner' status on someone else, and
+    the last owner can never be demoted away from 'owner' (checked
+    whether it's a self-demotion or someone else doing it).
     """
+    require_permission(current_user, Permission.manage_members)
     organization_id = _require_org(current_user)
-    _require_admin_role(current_user, organization_id)
 
     repo = OrganizationRepository(current_user.db)
     target_role = repo.get_member_role(organization_id, member_id)
@@ -210,7 +207,7 @@ def update_member_role(
 
     involves_owner = target_role == MemberRole.owner.value or payload.role == MemberRole.owner
     if involves_owner:
-        _require_owner_role(current_user, organization_id)
+        require_permission(current_user, Permission.manage_owners)
 
     if target_role == MemberRole.owner.value and payload.role != MemberRole.owner:
         if repo.count_owners(organization_id) <= 1:
@@ -230,13 +227,13 @@ def create_invite(
     payload: CreateInviteRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> OrganizationInviteCreated:
-    """Owner/admin only. There's no email-sending integration yet --
-    the response's `token` is the one and only time the invite link is
-    exposed; the admin copies and sends it manually. Share it as
-    `<frontend_url>/invites/accept?token=<token>`.
+    """Requires manage_invites (owner/admin). There's no email-sending
+    integration yet -- the response's `token` is the one and only time
+    the invite link is exposed; the admin copies and sends it manually.
+    Share it as `<frontend_url>/invites/accept?token=<token>`.
     """
+    require_permission(current_user, Permission.manage_invites)
     organization_id = _require_org(current_user)
-    _require_admin_role(current_user, organization_id)
     try:
         return OrganizationRepository(current_user.db).create_invite(
             organization_id=organization_id,
@@ -250,8 +247,8 @@ def create_invite(
 
 @router.get("/invites", response_model=list[OrganizationInvite])
 def list_invites(current_user: CurrentUser = Depends(get_current_user)) -> list[OrganizationInvite]:
+    require_permission(current_user, Permission.manage_invites)
     organization_id = _require_org(current_user)
-    _require_admin_role(current_user, organization_id)
     return OrganizationRepository(current_user.db).list_invites(organization_id)
 
 
@@ -259,8 +256,8 @@ def list_invites(current_user: CurrentUser = Depends(get_current_user)) -> list[
 def revoke_invite(
     invite_id: UUID, current_user: CurrentUser = Depends(get_current_user)
 ) -> OrganizationInvite:
+    require_permission(current_user, Permission.manage_invites)
     organization_id = _require_org(current_user)
-    _require_admin_role(current_user, organization_id)
     invite = OrganizationRepository(current_user.db).revoke_invite(invite_id, organization_id)
     if invite is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found.")

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { hasPermission } from '../lib/permissions';
 import type {
   CreateInviteRequest,
   InvitableRole,
@@ -16,12 +17,14 @@ import type {
 } from '../lib/types';
 
 const INVITABLE_ROLES: { value: InvitableRole; label: string }[] = [
-  { value: 'member', label: 'Member' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'manager', label: 'Manager' },
   { value: 'admin', label: 'Admin' },
 ];
 
 const ASSIGNABLE_ROLES: { value: MemberRole; label: string }[] = [
-  { value: 'member', label: 'Member' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'manager', label: 'Manager' },
   { value: 'admin', label: 'Admin' },
   { value: 'owner', label: 'Owner' },
 ];
@@ -39,7 +42,7 @@ export default function Organization() {
   const queryClient = useQueryClient();
 
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<InvitableRole>('member');
+  const [inviteRole, setInviteRole] = useState<InvitableRole>('staff');
   const [inviteError, setInviteError] = useState<string | null>(null);
   // The invite token is only ever returned once, at creation time --
   // keep it around locally to show the shareable link, since a
@@ -66,19 +69,29 @@ export default function Organization() {
   });
 
   const currentMember = membersQuery.data?.find((m) => m.user_id === userId);
-  const isAdmin = currentMember?.role === 'owner' || currentMember?.role === 'admin';
+  // Granular, not a single isAdmin boolean -- each button/section
+  // checks the specific permission it needs, mirroring the backend's
+  // require_permission() calls in api/routers/organizations.py
+  // one-to-one (manage_org_settings, manage_members, manage_invites,
+  // manage_owners). This is a UX nicety only; the backend re-checks
+  // every one of these for real -- see lib/permissions.ts's docstring.
+  const canManageOrgSettings = hasPermission(currentMember?.role, 'manage_org_settings');
+  const canManageMembers = hasPermission(currentMember?.role, 'manage_members');
+  const canManageInvites = hasPermission(currentMember?.role, 'manage_invites');
+  const canManageOwners = hasPermission(currentMember?.role, 'manage_owners');
 
-  // Only admins/owners can list invites at all (RLS-enforced on the
-  // backend, not just this check) -- don't even attempt the query
-  // otherwise, so a member doesn't see a confusing 403 in the network
-  // tab for a request they were never going to be allowed to make.
+  // Only admins/owners can list invites at all (manage_invites --
+  // RLS-enforced on the backend too, not just this check) -- don't
+  // even attempt the query otherwise, so a manager/staff member
+  // doesn't see a confusing 403 in the network tab for a request they
+  // were never going to be allowed to make.
   const invitesQuery = useQuery({
     queryKey: ['organization-invites'],
     queryFn: async () => {
       const { data } = await api.get<OrganizationInvite[]>('/organizations/invites');
       return data;
     },
-    enabled: !!orgQuery.data && isAdmin,
+    enabled: !!orgQuery.data && canManageInvites,
   });
 
   const createInviteMutation = useMutation({
@@ -89,7 +102,7 @@ export default function Organization() {
     onSuccess: (data) => {
       setLastCreatedInvite(data);
       setInviteEmail('');
-      setInviteRole('member');
+      setInviteRole('staff');
       queryClient.invalidateQueries({ queryKey: ['organization-invites'] });
     },
   });
@@ -100,6 +113,46 @@ export default function Organization() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['organization-invites'] });
+    },
+  });
+
+  const [isEditingOrg, setIsEditingOrg] = useState(false);
+  const [orgNameDraft, setOrgNameDraft] = useState('');
+  const [orgError, setOrgError] = useState<string | null>(null);
+
+  const updateOrgMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const { data } = await api.patch<OrganizationType>('/organizations', { name });
+      return data;
+    },
+    onSuccess: () => {
+      setOrgError(null);
+      setIsEditingOrg(false);
+      queryClient.invalidateQueries({ queryKey: ['organization'] });
+    },
+    onError: (err) => {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setOrgError(detail ?? 'Could not update organization');
+    },
+  });
+
+  const [leaveError, setLeaveError] = useState<string | null>(null);
+
+  const leaveOrgMutation = useMutation({
+    mutationFn: async () => {
+      await api.post('/organizations/leave');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['organization'] });
+      navigate('/organizations/new');
+    },
+    onError: (err) => {
+      // Most likely the last-owner guard from leave_organization()
+      // (migration 0013) -- surface its real message rather than a
+      // generic one, since it tells the person exactly what to do
+      // (promote someone else first, or delete the org).
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setLeaveError(detail ?? 'Could not leave organization');
     },
   });
 
@@ -191,19 +244,78 @@ export default function Organization() {
     <div className="min-h-screen bg-slate-950 p-8">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-100">{org.name}</h1>
+          {isEditingOrg ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (orgNameDraft.trim()) updateOrgMutation.mutate(orgNameDraft.trim());
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                autoFocus
+                value={orgNameDraft}
+                onChange={(e) => setOrgNameDraft(e.target.value)}
+                className="text-2xl font-semibold bg-slate-900 text-slate-100 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <button
+                type="submit"
+                disabled={updateOrgMutation.isPending}
+                className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded px-3 py-1.5"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditingOrg(false)}
+                className="text-xs text-slate-400 hover:text-slate-200"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold text-slate-100">{org.name}</h1>
+              {canManageOrgSettings && (
+                <button
+                  onClick={() => {
+                    setOrgNameDraft(org.name);
+                    setOrgError(null);
+                    setIsEditingOrg(true);
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  Rename
+                </button>
+              )}
+            </div>
+          )}
           <p className="text-sm text-slate-400 mt-1 capitalize">{org.org_type.replace(/_/g, ' ')}</p>
+          {orgError && <p className="text-xs text-red-400 mt-1">{orgError}</p>}
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-400">{email}</span>
           <Link to="/tracks" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
             Tracks
           </Link>
+          <button
+            onClick={() => {
+              if (window.confirm('Leave this organization?')) {
+                setLeaveError(null);
+                leaveOrgMutation.mutate();
+              }
+            }}
+            disabled={leaveOrgMutation.isPending}
+            className="text-sm text-red-400 hover:text-red-300 disabled:opacity-50"
+          >
+            Leave org
+          </button>
           <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-200">
             Log out
           </button>
         </div>
       </div>
+      {leaveError && <p className="text-sm text-red-400 mb-4 -mt-3">{leaveError}</p>}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Members */}
@@ -216,12 +328,12 @@ export default function Organization() {
             {membersQuery.data?.map((m) => {
               const isSelf = m.user_id === userId;
               // Client-side guard mirrors the backend's, for UX only --
-              // the backend re-checks all of this itself (see
-              // _require_owner_role and the last-owner guards in
-              // organizations.py) and is the real authorization
-              // boundary. Only owners can touch another owner's role;
-              // nobody edits themselves through this panel.
-              const canManage = isAdmin && !isSelf && (m.role !== 'owner' || currentMember?.role === 'owner');
+              // the backend re-checks all of this itself (require_permission
+              // in organizations.py, then RLS underneath that) and is the
+              // real authorization boundary. Only owners (manage_owners)
+              // can touch another owner's role; nobody edits themselves
+              // through this panel.
+              const canManage = canManageMembers && !isSelf && (m.role !== 'owner' || canManageOwners);
               return (
                 <li key={m.id} className="flex justify-between items-center text-sm bg-slate-800 rounded px-3 py-2">
                   <span className="text-slate-200">
@@ -238,7 +350,7 @@ export default function Organization() {
                         disabled={updateRoleMutation.isPending}
                         className="rounded bg-slate-900 text-slate-200 text-xs px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
                       >
-                        {ASSIGNABLE_ROLES.filter((r) => r.value !== 'owner' || currentMember?.role === 'owner').map(
+                        {ASSIGNABLE_ROLES.filter((r) => r.value !== 'owner' || canManageOwners).map(
                           (r) => (
                             <option key={r.value} value={r.value}>
                               {r.label}
@@ -267,8 +379,8 @@ export default function Organization() {
           </ul>
         </div>
 
-        {/* Invites -- admins/owners only */}
-        {isAdmin && (
+        {/* Invites -- requires manage_invites (owner/admin) */}
+        {canManageInvites && (
           <div className="bg-slate-900 rounded-lg p-5">
             <h2 className="text-lg font-medium text-slate-100 mb-4">Invite someone</h2>
             <form onSubmit={handleInviteSubmit} className="space-y-3">
