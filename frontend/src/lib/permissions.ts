@@ -27,6 +27,8 @@ export type Permission =
   | 'manage_members'
   | 'view_members'
   | 'manage_invites'
+  | 'manage_assignments'
+  | 'view_assignments'
   | 'manage_tracks'
   | 'view_tracks'
   | 'manage_applications'
@@ -42,6 +44,8 @@ const ALL_PERMISSIONS: Permission[] = [
   'manage_members',
   'view_members',
   'manage_invites',
+  'manage_assignments',
+  'view_assignments',
   'manage_tracks',
   'view_tracks',
   'manage_applications',
@@ -57,6 +61,7 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
   admin: ALL_PERMISSIONS.filter((p) => p !== 'manage_owners'),
   manager: [
     'view_members',
+    'view_assignments',
     'manage_tracks',
     'view_tracks',
     'manage_applications',
@@ -66,7 +71,14 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
     'manage_matches',
     'view_matches',
   ],
-  staff: ['view_members', 'view_tracks', 'view_applications', 'view_documents', 'view_matches'],
+  staff: [
+    'view_members',
+    'view_assignments',
+    'view_tracks',
+    'view_applications',
+    'view_documents',
+    'view_matches',
+  ],
 };
 
 export function hasPermission(role: MemberRole | undefined | null, permission: Permission): boolean {

@@ -206,10 +206,13 @@ export type InvitableRole = 'admin' | 'manager' | 'staff';
 
 export type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
 
+export type SharingMode = 'assigned_only' | 'full';
+
 export interface Organization {
   id: string;
   name: string;
   org_type: OrgType;
+  sharing_mode: SharingMode;
   created_at: string;
   updated_at: string;
 }
@@ -272,4 +275,23 @@ export interface SignupResponse {
   access_token: string | null;
   refresh_token: string | null;
   requires_confirmation: boolean;
+}
+
+// Migration 0015 -- who's assigned to work with which candidate.
+// What list_assignments returns differs by the caller's role, not by
+// any frontend filtering: owners/admins see every assignment in the
+// org, managers/staff see only their own caseload (assigned_to =
+// themselves) -- enforced by RLS on the backend, see that migration.
+export interface CandidateAssignment {
+  id: string;
+  organization_id: string;
+  candidate_user_id: string;
+  assigned_to: string;
+  assigned_by: string;
+  created_at: string;
+}
+
+export interface CreateAssignmentRequest {
+  candidate_user_id: string;
+  assigned_to: string;
 }

@@ -46,10 +46,22 @@ class InviteStatus(str, Enum):
     expired = "expired"
 
 
+class SharingMode(str, Enum):
+    """Migration 0015 -- the flexibility the founder asked for: an org
+    can opt into full sharing instead of the assigned_only default.
+    Owners/admins always have full visibility regardless of this
+    setting; it only changes what managers/staff can see.
+    """
+
+    assigned_only = "assigned_only"
+    full = "full"
+
+
 class Organization(BaseModel):
     id: UUID
     name: str
     org_type: OrgType
+    sharing_mode: SharingMode
     created_at: datetime
     updated_at: datetime
 
@@ -107,3 +119,23 @@ class InvitePreview(BaseModel):
     role: InvitableRole
     status: InviteStatus
     expires_at: datetime
+
+
+class CandidateAssignment(BaseModel):
+    """Who's assigned to work with which candidate, backed by
+    organization_candidate_assignments (migration 0015). This is what
+    the assigned_only sharing_mode actually gates -- see
+    can_view_org_resource() in that migration. RLS on the underlying
+    table already scopes what a given caller can see: owners/admins
+    see every assignment in the org, a manager/staff sees only rows
+    where assigned_to is themselves (their own caseload) -- the
+    repository doesn't add its own filtering on top of that, RLS is
+    the real boundary here same as everywhere else in this module.
+    """
+
+    id: UUID
+    organization_id: UUID
+    candidate_user_id: UUID
+    assigned_to: UUID
+    assigned_by: UUID
+    created_at: datetime

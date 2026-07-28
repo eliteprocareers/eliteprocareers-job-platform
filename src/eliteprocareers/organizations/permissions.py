@@ -44,6 +44,12 @@ class Permission(str, Enum):
     view_members = "view_members"
     manage_invites = "manage_invites"  # create/revoke invites
 
+    # Candidate assignments (migration 0015 -- assigned_only sharing)
+    manage_assignments = "manage_assignments"  # assign/unassign candidates
+    view_assignments = "view_assignments"  # see assignments (RLS further
+    # scopes non-admins to their own caseload only -- see
+    # organization_candidate_assignments' SELECT policy)
+
     # Tracks (job-search tracks -- profiles/track_repository.py)
     manage_tracks = "manage_tracks"
     view_tracks = "view_tracks"
@@ -71,6 +77,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "manager": frozenset(
         {
             Permission.view_members,
+            Permission.view_assignments,
             Permission.manage_tracks,
             Permission.view_tracks,
             Permission.manage_applications,
@@ -84,6 +91,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "staff": frozenset(
         {
             Permission.view_members,
+            Permission.view_assignments,
             Permission.view_tracks,
             Permission.view_applications,
             Permission.view_documents,

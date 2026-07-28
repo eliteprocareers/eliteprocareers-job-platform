@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from eliteprocareers.api.dependencies import CurrentUser, get_current_user
 from eliteprocareers.api.schemas import (
     AcceptInviteRequest,
+    CreateAssignmentRequest,
     CreateInviteRequest,
     CreateOrganizationRequest,
     UpdateMemberRoleRequest,
@@ -14,6 +15,7 @@ from eliteprocareers.api.schemas import (
 )
 from eliteprocareers.db.client import SupabaseError
 from eliteprocareers.organizations.models import (
+    CandidateAssignment,
     InvitePreview,
     MemberRole,
     Organization,
@@ -119,8 +121,9 @@ def update_organization(
     require_permission(current_user, Permission.manage_org_settings)
     organization_id = _require_org(current_user)
     org_type_value = payload.org_type.value if payload.org_type is not None else None
+    sharing_mode_value = payload.sharing_mode.value if payload.sharing_mode is not None else None
     updated = OrganizationRepository(current_user.db).update_organization(
-        organization_id, name=payload.name, org_type=org_type_value
+        organization_id, name=payload.name, org_type=org_type_value, sharing_mode=sharing_mode_value
     )
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
@@ -302,3 +305,58 @@ def accept_invite(
             status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found."
         )
     return org
+
+
+# ============================================================
+# Candidate assignments (migration 0015 -- assigned_only sharing)
+# ============================================================
+
+
+@router.post("/assignments", response_model=CandidateAssignment, status_code=status.HTTP_201_CREATED)
+def create_assignment(
+    payload: CreateAssignmentRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CandidateAssignment:
+    """Requires manage_assignments (owner/admin). This is what the
+    assigned_only sharing_mode actually gates -- see can_view_org_
+    resource() in migration 0015. Doesn't validate that
+    candidate_user_id/assigned_to are real org members or candidates
+    with existing data -- an assignment can be created ahead of any
+    data existing for that candidate, same as inviting someone doesn't
+    require they've signed up yet.
+    """
+    require_permission(current_user, Permission.manage_assignments)
+    organization_id = _require_org(current_user)
+    try:
+        return OrganizationRepository(current_user.db).create_assignment(
+            organization_id=organization_id,
+            candidate_user_id=payload.candidate_user_id,
+            assigned_to=payload.assigned_to,
+            assigned_by=current_user.id,
+        )
+    except SupabaseError as exc:
+        raise _friendly_supabase_error(exc, fallback_status=status.HTTP_400_BAD_REQUEST) from exc
+
+
+@router.get("/assignments", response_model=list[CandidateAssignment])
+def list_assignments(current_user: CurrentUser = Depends(get_current_user)) -> list[CandidateAssignment]:
+    """Requires view_assignments (every role has this). What comes
+    back differs by role, not by this endpoint's own logic -- RLS on
+    organization_candidate_assignments already scopes owners/admins to
+    every assignment in the org and managers/staff to only their own
+    caseload (assigned_to = themselves). See migration 0015.
+    """
+    require_permission(current_user, Permission.view_assignments)
+    organization_id = _require_org(current_user)
+    return OrganizationRepository(current_user.db).list_assignments(organization_id)
+
+
+@router.delete("/assignments/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_assignment(
+    assignment_id: UUID, current_user: CurrentUser = Depends(get_current_user)
+) -> None:
+    require_permission(current_user, Permission.manage_assignments)
+    organization_id = _require_org(current_user)
+    deleted = OrganizationRepository(current_user.db).delete_assignment(organization_id, assignment_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found.")

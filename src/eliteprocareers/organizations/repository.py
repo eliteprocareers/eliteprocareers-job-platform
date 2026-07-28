@@ -26,6 +26,7 @@ from uuid import UUID
 from eliteprocareers.config import settings
 from eliteprocareers.db.client import SupabaseClient
 from eliteprocareers.organizations.models import (
+    CandidateAssignment,
     InvitePreview,
     Organization,
     OrganizationInvite,
@@ -38,6 +39,7 @@ class OrganizationRepository:
     ORG_TABLE = "organizations"
     MEMBER_TABLE = "organization_members"
     INVITE_TABLE = "organization_invites"
+    ASSIGNMENT_TABLE = "organization_candidate_assignments"
 
     def __init__(self, db: SupabaseClient) -> None:
         self.db = db
@@ -69,20 +71,28 @@ class OrganizationRepository:
         return Organization.model_validate(rows[0])
 
     def update_organization(
-        self, organization_id: UUID, name: str | None, org_type: str | None
+        self,
+        organization_id: UUID,
+        name: str | None,
+        org_type: str | None,
+        sharing_mode: str | None = None,
     ) -> Organization | None:
         """RLS (is_org_admin, migration 0007) already gates this --
         the UPDATE policy on organizations existed since 0007 but,
         like the members DELETE/UPDATE policies, was never wired up
         in application code until now. Only includes fields that were
-        actually provided (partial update), so leaving one field out
-        of the request doesn't clobber it with a default.
+        actually provided (partial update), so leaving a field out of
+        the request doesn't clobber it with a default. sharing_mode
+        added in migration 0015 -- the org-wide opt-in to full
+        candidate-data sharing instead of assigned_only.
         """
         data: dict = {}
         if name is not None:
             data["name"] = name
         if org_type is not None:
             data["org_type"] = org_type
+        if sharing_mode is not None:
+            data["sharing_mode"] = sharing_mode
         if not data:
             return self.get_organization(organization_id)
         rows = self.db.update(self.ORG_TABLE, data=data, params={"id": f"eq.{organization_id}"})
@@ -102,6 +112,51 @@ class OrganizationRepository:
         """
         organization_id = self.db.rpc("leave_organization", {})
         return UUID(organization_id)
+
+    # ------------------------------------------------------------------
+    # Candidate assignments (migration 0015 -- assigned_only sharing)
+    # ------------------------------------------------------------------
+
+    def create_assignment(
+        self, organization_id: UUID, candidate_user_id: UUID, assigned_to: UUID, assigned_by: UUID
+    ) -> CandidateAssignment:
+        """RLS-gated to owners/admins (manage_assignments permission,
+        checked at the router level too -- same defense-in-depth as
+        everywhere else in this module). The unique constraint on
+        (organization_id, candidate_user_id, assigned_to) means
+        assigning the same candidate to the same person twice is a
+        no-op failure, not a duplicate row -- surfaced as a
+        SupabaseError, same handling as every other constraint
+        violation in this repository.
+        """
+        payload = {
+            "organization_id": str(organization_id),
+            "candidate_user_id": str(candidate_user_id),
+            "assigned_to": str(assigned_to),
+            "assigned_by": str(assigned_by),
+        }
+        rows = self.db.insert(self.ASSIGNMENT_TABLE, payload)
+        return CandidateAssignment.model_validate(rows[0])
+
+    def list_assignments(self, organization_id: UUID) -> list[CandidateAssignment]:
+        """No extra filtering here -- the RLS SELECT policy on
+        organization_candidate_assignments already scopes this
+        correctly per caller (owners/admins see every assignment in
+        the org, a manager/staff sees only their own caseload), same
+        pattern as list_members and list_invites.
+        """
+        rows = self.db.select(
+            self.ASSIGNMENT_TABLE,
+            params={"select": "*", "organization_id": f"eq.{organization_id}", "order": "created_at.desc"},
+        )
+        return [CandidateAssignment.model_validate(r) for r in rows]
+
+    def delete_assignment(self, organization_id: UUID, assignment_id: UUID) -> bool:
+        rows = self.db.delete(
+            self.ASSIGNMENT_TABLE,
+            params={"id": f"eq.{assignment_id}", "organization_id": f"eq.{organization_id}"},
+        )
+        return bool(rows)
 
     # ------------------------------------------------------------------
     # Members

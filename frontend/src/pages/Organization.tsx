@@ -7,6 +7,8 @@ import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { hasPermission } from '../lib/permissions';
 import type {
+  CandidateAssignment,
+  CreateAssignmentRequest,
   CreateInviteRequest,
   InvitableRole,
   MemberRole,
@@ -79,6 +81,7 @@ export default function Organization() {
   const canManageMembers = hasPermission(currentMember?.role, 'manage_members');
   const canManageInvites = hasPermission(currentMember?.role, 'manage_invites');
   const canManageOwners = hasPermission(currentMember?.role, 'manage_owners');
+  const canManageAssignments = hasPermission(currentMember?.role, 'manage_assignments');
 
   // Only admins/owners can list invites at all (manage_invites --
   // RLS-enforced on the backend too, not just this check) -- don't
@@ -92,6 +95,19 @@ export default function Organization() {
       return data;
     },
     enabled: !!orgQuery.data && canManageInvites,
+  });
+
+  // Every role has view_assignments, but what comes back differs by
+  // role -- owners/admins see every assignment in the org, managers/
+  // staff see only their own caseload (assigned_to = themselves).
+  // That's RLS on the backend (migration 0015), not filtering here.
+  const assignmentsQuery = useQuery({
+    queryKey: ['organization-assignments'],
+    queryFn: async () => {
+      const { data } = await api.get<CandidateAssignment[]>('/organizations/assignments');
+      return data;
+    },
+    enabled: !!orgQuery.data,
   });
 
   const createInviteMutation = useMutation({
@@ -153,6 +169,53 @@ export default function Organization() {
       // (promote someone else first, or delete the org).
       const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
       setLeaveError(detail ?? 'Could not leave organization');
+    },
+  });
+
+  const [sharingModeError, setSharingModeError] = useState<string | null>(null);
+
+  const updateSharingModeMutation = useMutation({
+    mutationFn: async (sharing_mode: 'assigned_only' | 'full') => {
+      const { data } = await api.patch<OrganizationType>('/organizations', { sharing_mode });
+      return data;
+    },
+    onSuccess: () => {
+      setSharingModeError(null);
+      queryClient.invalidateQueries({ queryKey: ['organization'] });
+    },
+    onError: (err) => {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setSharingModeError(detail ?? 'Could not update sharing mode');
+    },
+  });
+
+  const [assignCandidateId, setAssignCandidateId] = useState('');
+  const [assignToMemberId, setAssignToMemberId] = useState('');
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+
+  const createAssignmentMutation = useMutation({
+    mutationFn: async (payload: CreateAssignmentRequest) => {
+      const { data } = await api.post<CandidateAssignment>('/organizations/assignments', payload);
+      return data;
+    },
+    onSuccess: () => {
+      setAssignmentError(null);
+      setAssignCandidateId('');
+      setAssignToMemberId('');
+      queryClient.invalidateQueries({ queryKey: ['organization-assignments'] });
+    },
+    onError: (err) => {
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setAssignmentError(detail ?? 'Could not create assignment');
+    },
+  });
+
+  const removeAssignmentMutation = useMutation({
+    mutationFn: async (assignmentId: string) => {
+      await api.delete(`/organizations/assignments/${assignmentId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['organization-assignments'] });
     },
   });
 
@@ -292,6 +355,25 @@ export default function Organization() {
           )}
           <p className="text-sm text-slate-400 mt-1 capitalize">{org.org_type.replace(/_/g, ' ')}</p>
           {orgError && <p className="text-xs text-red-400 mt-1">{orgError}</p>}
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-slate-500">
+              {org.sharing_mode === 'full'
+                ? 'Full sharing -- every member sees every candidate'
+                : 'Assigned-only -- managers/staff see only their assigned candidates'}
+            </span>
+            {canManageOrgSettings && (
+              <button
+                onClick={() =>
+                  updateSharingModeMutation.mutate(org.sharing_mode === 'full' ? 'assigned_only' : 'full')
+                }
+                disabled={updateSharingModeMutation.isPending}
+                className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+              >
+                Switch to {org.sharing_mode === 'full' ? 'assigned-only' : 'full sharing'}
+              </button>
+            )}
+          </div>
+          {sharingModeError && <p className="text-xs text-red-400 mt-1">{sharingModeError}</p>}
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-400">{email}</span>
@@ -459,6 +541,91 @@ export default function Organization() {
             </ul>
           </div>
         )}
+
+        {/* Assignments -- everyone with view_assignments sees this
+            (all four roles); what comes back is scoped by RLS, not by
+            this component (see the assignmentsQuery comment above).
+            Only canManageAssignments (owner/admin) gets the create
+            form and remove buttons. */}
+        <div className="bg-slate-900 rounded-lg p-5">
+          <h2 className="text-lg font-medium text-slate-100 mb-4">
+            {canManageAssignments ? 'Candidate assignments' : 'My assigned candidates'}
+          </h2>
+
+          {canManageAssignments && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setAssignmentError(null);
+                if (assignCandidateId.trim() && assignToMemberId) {
+                  createAssignmentMutation.mutate({
+                    candidate_user_id: assignCandidateId.trim(),
+                    assigned_to: assignToMemberId,
+                  });
+                }
+              }}
+              className="space-y-2 mb-4"
+            >
+              <input
+                placeholder="Candidate user ID"
+                value={assignCandidateId}
+                onChange={(e) => setAssignCandidateId(e.target.value)}
+                className="w-full rounded bg-slate-800 text-slate-100 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <div className="flex gap-2">
+                <select
+                  value={assignToMemberId}
+                  onChange={(e) => setAssignToMemberId(e.target.value)}
+                  className="flex-1 rounded bg-slate-800 text-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Assign to...</option>
+                  {membersQuery.data
+                    ?.filter((m) => m.role === 'manager' || m.role === 'staff')
+                    .map((m) => (
+                      <option key={m.user_id} value={m.user_id}>
+                        {m.email} ({m.role})
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={createAssignmentMutation.isPending}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm rounded px-4 py-2 font-medium"
+                >
+                  Assign
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                Candidate user ID isn't looked up here yet -- paste the id directly.
+              </p>
+              {assignmentError && <p className="text-sm text-red-400">{assignmentError}</p>}
+            </form>
+          )}
+
+          {assignmentsQuery.isLoading && <p className="text-sm text-slate-400">Loading assignments...</p>}
+          {assignmentsQuery.isError && <p className="text-sm text-red-400">Failed to load assignments.</p>}
+          <ul className="space-y-2">
+            {assignmentsQuery.data?.map((a) => (
+              <li key={a.id} className="flex justify-between items-center text-sm bg-slate-800 rounded px-3 py-2">
+                <span className="text-slate-200">
+                  Candidate {a.candidate_user_id.slice(0, 8)} → {a.assigned_to.slice(0, 8)}
+                </span>
+                {canManageAssignments && (
+                  <button
+                    onClick={() => removeAssignmentMutation.mutate(a.id)}
+                    disabled={removeAssignmentMutation.isPending}
+                    className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </li>
+            ))}
+            {assignmentsQuery.data?.length === 0 && (
+              <li className="text-sm text-slate-500">No assignments yet.</li>
+            )}
+          </ul>
+        </div>
       </div>
     </div>
   );

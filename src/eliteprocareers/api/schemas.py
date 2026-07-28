@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from eliteprocareers.organizations.models import InvitableRole, MemberRole, OrgType
+from eliteprocareers.organizations.models import InvitableRole, MemberRole, OrgType, SharingMode
 from eliteprocareers.profiles.models import ApplicationStatus, GeneratedDocument
 
 
@@ -205,13 +205,22 @@ class AcceptInviteRequest(BaseModel):
 
 
 class UpdateOrganizationRequest(BaseModel):
-    """Body for PATCH /organizations. Both fields optional -- a partial
-    update, so renaming doesn't require re-sending org_type and vice
-    versa. Admin/owner only, enforced by RLS (is_org_admin), same as
-    every other admin-gated org write.
+    """Body for PATCH /organizations. All fields optional -- a partial
+    update. Admin/owner only, enforced by RLS (is_org_admin), same as
+    every other admin-gated org write. sharing_mode (migration 0015)
+    is the org-wide opt-in to full sharing instead of assigned_only.
     """
     name: str | None = None
     org_type: OrgType | None = None
+    sharing_mode: SharingMode | None = None
+
+
+class CreateAssignmentRequest(BaseModel):
+    """Body for POST /organizations/assignments. manage_assignments
+    (owner/admin only) -- see organizations/permissions.py.
+    """
+    candidate_user_id: UUID
+    assigned_to: UUID
 
 
 class UpdateMemberRoleRequest(BaseModel):
