@@ -23,6 +23,8 @@ interface JobSummary {
 
 interface LocationState {
   job?: JobSummary;
+  backTo?: string;
+  backLabel?: string;
 }
 
 // Versioning is now genuinely job-scoped on the backend (generated_documents
@@ -166,7 +168,7 @@ function CopyButton({ text }: { text: string }) {
 export default function TrackJobDocuments() {
   const { trackId, jobId } = useParams<{ trackId: string; jobId: string }>();
   const location = useLocation();
-  const stateJob = (location.state as LocationState | null)?.job;
+  const { job: stateJob, backTo, backLabel } = (location.state as LocationState | null) ?? {};
   const queryClient = useQueryClient();
 
   const [errors, setErrors] = useState<Partial<Record<DocType, string>>>({});
@@ -306,6 +308,7 @@ export default function TrackJobDocuments() {
     <div className="min-h-screen bg-slate-950 p-8">
       <Link
         to={`/tracks/${trackId}/matches`}
+        state={{ backTo, backLabel }}
         className="text-sm text-slate-400 hover:text-slate-200"
       >
         ← Back to matches

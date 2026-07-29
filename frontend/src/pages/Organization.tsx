@@ -380,6 +380,9 @@ export default function Organization() {
           <Link to="/tracks" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
             Tracks
           </Link>
+          <Link to="/candidates" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
+            Candidates
+          </Link>
           <button
             onClick={() => {
               if (window.confirm('Leave this organization?')) {

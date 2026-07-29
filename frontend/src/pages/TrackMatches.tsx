@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useLocation, Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
@@ -7,8 +7,20 @@ import type { MatchTriggerResponse, MatchWithJob } from '../lib/types';
 const POLL_INTERVAL_MS = 10000;
 const POLL_DURATION_MS = 5 * 60 * 1000;
 
+interface TrackMatchesLocationState {
+  backTo?: string;
+  backLabel?: string;
+}
+
 export default function TrackMatches() {
   const { trackId } = useParams<{ trackId: string }>();
+  const location = useLocation();
+  // Defaults to the old always-/tracks behavior. Candidates.tsx passes
+  // backTo=/candidates when a manager/staff opens into an assigned
+  // candidate's track from there, since that candidate's tracks don't
+  // show up on this caller's own /tracks page -- linking back to
+  // /tracks would silently strand them. See Candidates.tsx.
+  const { backTo, backLabel } = (location.state as TrackMatchesLocationState) ?? {};
   const [minScore, setMinScore] = useState<number>(0);
   const [isPolling, setIsPolling] = useState(false);
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
@@ -47,12 +59,15 @@ export default function TrackMatches() {
 
   return (
     <div className="min-h-screen bg-slate-950 p-8">
-      <Link to="/tracks" className="text-sm text-slate-400 hover:text-slate-200">← Back to tracks</Link>
+      <Link to={backTo ?? '/tracks'} className="text-sm text-slate-400 hover:text-slate-200">
+        ← {backLabel ?? 'Back to tracks'}
+      </Link>
       <div className="flex justify-between items-center mt-4 mb-2">
         <h1 className="text-2xl font-semibold text-slate-100">Matches</h1>
         <div className="flex items-center gap-3">
           <Link
             to={`/tracks/${trackId}/applications`}
+            state={{ backTo, backLabel }}
             className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2"
           >
             Applications
@@ -111,6 +126,8 @@ export default function TrackMatches() {
                     job_company: m.job_company,
                     job_url: m.job_url,
                   },
+                  backTo,
+                  backLabel,
                 }}
                 className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-1.5"
               >

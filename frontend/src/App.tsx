@@ -13,6 +13,7 @@ import Profile from './pages/Profile';
 import CreateOrganization from './pages/CreateOrganization';
 import Organization from './pages/Organization';
 import AcceptInvite from './pages/AcceptInvite';
+import Candidates from './pages/Candidates';
 
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth();
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/organizations/new" element={<ProtectedRoute><CreateOrganization /></ProtectedRoute>} />
       <Route path="/organization" element={<ProtectedRoute><Organization /></ProtectedRoute>} />
+      <Route path="/candidates" element={<ProtectedRoute><Candidates /></ProtectedRoute>} />
       <Route path="/tracks/new" element={<ProtectedRoute><TrackCreate /></ProtectedRoute>} />
       <Route path="/tracks/:trackId/edit" element={<ProtectedRoute><TrackEdit /></ProtectedRoute>} />
       <Route path="/tracks/:trackId/matches" element={<ProtectedRoute><TrackMatches /></ProtectedRoute>} />

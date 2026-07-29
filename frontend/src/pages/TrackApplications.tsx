@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useLocation, Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/api';
@@ -17,6 +17,7 @@ function formatDate(iso: string | null): string {
 
 export default function TrackApplications() {
   const { trackId } = useParams<{ trackId: string }>();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
   const [rowError, setRowError] = useState<Record<string, string>>({});
@@ -66,7 +67,11 @@ export default function TrackApplications() {
 
   return (
     <div className="min-h-screen bg-slate-950 p-8">
-      <Link to={`/tracks/${trackId}/matches`} className="text-sm text-slate-400 hover:text-slate-200">
+      <Link
+        to={`/tracks/${trackId}/matches`}
+        state={location.state}
+        className="text-sm text-slate-400 hover:text-slate-200"
+      >
         ← Back to matches
       </Link>
 
