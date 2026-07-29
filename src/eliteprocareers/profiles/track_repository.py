@@ -18,6 +18,7 @@ class TrackRepository:
     def create_track(
         self,
         user_id: UUID,
+        organization_id: UUID,
         track_name: str,
         target_roles: list[str] | None = None,
         scoring_weights: dict[str, float] | None = None,
@@ -37,8 +38,18 @@ class TrackRepository:
         auto_apply_min_score: float = 0.85,
         undo_window_minutes: int | None = 15,
     ) -> CVTrack:
+        """organization_id is required (cv_tracks.organization_id has been
+        NOT NULL since migration 0007) -- this INSERT never set it before
+        the 2026-07-29 fix, meaning any brand-new candidate's first track
+        (the step right after their first CV upload) hard-failed since
+        2026-07-26, same bug class as candidate_profiles.create_profile()
+        and user_job_matches.upsert_match(), found and fixed together.
+        Caller (tracks.py's create_track endpoint) must pass
+        current_user.organization_id.
+        """
         payload = {
             "user_id": str(user_id),
+            "organization_id": str(organization_id),
             "track_name": track_name,
             "target_roles": target_roles or [],
             "scoring_weights": scoring_weights or {},

@@ -55,7 +55,20 @@ async def upload_cv(
     the client always gets a real upload_id to poll. Poll
     GET /profile/cv-upload-status/{upload_id} for real completion
     status, same shape as GET /tracks/{id}/match-status/{run_id}.
+
+    organization_id (fixed 2026-07-29): required by candidate_profiles'
+    NOT NULL constraint since migration 0007 -- current_user.organization_id
+    is None guard added here for the same reason as tracks.py's
+    create_track, before scheduling a background task that would
+    otherwise fail opaquely (mark_failed with a raw Postgres error,
+    instead of a clean 400 the client sees immediately).
     """
+    if current_user.organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your account isn't associated with an organization yet.",
+        )
+
     if not file.filename or not file.filename.lower().endswith(SUPPORTED_EXTENSIONS):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

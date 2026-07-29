@@ -41,8 +41,18 @@ class ProfileRepository:
 
     # --- candidate_profiles ---
 
-    def create_profile(self, user_id: UUID, **fields) -> CandidateProfile:
-        payload = {"user_id": str(user_id), **fields}
+    def create_profile(self, user_id: UUID, organization_id: UUID, **fields) -> CandidateProfile:
+        """organization_id is required (candidate_profiles.organization_id
+        has been NOT NULL since migration 0007) -- found broken alongside
+        cv_tracks.create_track() and user_job_matches.upsert_match() during
+        the 2026-07-29 audit that fixed all three: this INSERT never set
+        it, meaning any brand-new user's first CV upload (the very first
+        step of onboarding) has hard-failed since 2026-07-26, with no
+        matching run or track ever able to exist for them at all. Caller
+        (parsing/pipeline.py, ultimately profile.py's upload_cv endpoint)
+        must pass current_user.organization_id.
+        """
+        payload = {"user_id": str(user_id), "organization_id": str(organization_id), **fields}
         rows = self.db.insert("candidate_profiles", payload)
         return CandidateProfile.model_validate(rows[0])
 

@@ -160,6 +160,16 @@ class CVTrack(BaseModel):
     """
     id: UUID | None = None
     user_id: UUID
+    # organization_id (migration 0007): the DB column has existed since
+    # multi-tenant conversion, but was never surfaced on this model --
+    # nothing before this needed it. Read-only here: never accepted in
+    # create_track()/update_track()'s payloads, only ever returned by
+    # the DB. Now the authoritative source matching_service.py uses for
+    # which org a match/application/document write belongs to, instead
+    # of trusting whichever caller happened to trigger a run (fixes the
+    # organization_id-misattribution gap trigger_matching's docstring
+    # flagged 2026-07-28).
+    organization_id: UUID | None = None
     track_name: str
     target_roles: list[str] = Field(default_factory=list)
     scoring_weights: dict[str, float] = Field(default_factory=dict)

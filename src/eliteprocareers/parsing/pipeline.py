@@ -19,12 +19,20 @@ from eliteprocareers.profiles.upload_repository import CVUploadRepository
 
 
 def save_parsed_profile(
-    user_id: UUID, parsed: ParsedCVProfile, profile_repo: ProfileRepository
+    user_id: UUID,
+    organization_id: UUID,
+    parsed: ParsedCVProfile,
+    profile_repo: ProfileRepository,
 ) -> int:
     """Persists a ParsedCVProfile into candidate_profiles + related
     tables. Returns a count of fields/rows written, for cv_uploads.
     fields_extracted (a rough signal for the client, not an exact
     schema-field count).
+
+    organization_id is only used on first-ever upload (the create_profile
+    branch below) -- an update never touches it, same reasoning as
+    upsert_match's organization_id guard: it can't legitimately change
+    for an existing profile.
 
     Base-profile fields: only the ones the CV actually had (non-None in
     `parsed`) are written. On first upload this creates the profile; on
@@ -57,7 +65,9 @@ def save_parsed_profile(
 
     existing = profile_repo.get_profile_by_user(user_id)
     if existing is None:
-        profile = profile_repo.create_profile(user_id=user_id, **base_fields)
+        profile = profile_repo.create_profile(
+            user_id=user_id, organization_id=organization_id, **base_fields
+        )
     elif base_fields:
         profile = profile_repo.update_profile(existing.id, **base_fields)
     else:
@@ -140,6 +150,7 @@ def _with_date_text(
 
 def parse_cv_upload_tracked(
     user_id: UUID,
+    organization_id: UUID,
     upload_id: UUID,
     filename: str,
     content: bytes,
@@ -151,6 +162,14 @@ def parse_cv_upload_tracked(
     matching_service.run_matching_for_track_tracked's try/except/mark_*
     shape exactly. db must be user-scoped (not service_role), same RLS
     rule as everywhere else in this API layer.
+
+    organization_id (fixed 2026-07-29): required by candidate_profiles'
+    NOT NULL constraint since migration 0007 -- see save_parsed_profile's
+    docstring and ProfileRepository.create_profile's for the bug this
+    closes. profile.py's upload_cv endpoint is responsible for the
+    orgless-user 400 guard before scheduling this background task at
+    all, same division of responsibility as everywhere else organization_id
+    is threaded through this API.
     """
     upload_repo = CVUploadRepository(db)
     profile_repo = ProfileRepository(db)
@@ -158,7 +177,7 @@ def parse_cv_upload_tracked(
     try:
         raw_text = extract_text_from_file(filename, content)
         parsed = extract_cv_profile(raw_text)
-        fields_extracted = save_parsed_profile(user_id, parsed, profile_repo)
+        fields_extracted = save_parsed_profile(user_id, organization_id, parsed, profile_repo)
         upload_repo.mark_completed(upload_id, raw_text=raw_text, fields_extracted=fields_extracted)
     except ExtractionError as exc:
         # Expected failure mode (unreadable/scanned file) -- still

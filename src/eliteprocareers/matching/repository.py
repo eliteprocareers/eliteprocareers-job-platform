@@ -2,11 +2,29 @@
 UserJobMatchRepository -- per-user scored matches between CV tracks and
 real ingested jobs.
 
-RLS note: user_job_matches has a user-scoped RLS policy
-(user_id = auth.uid()), unlike jobs (backend-owned, service_role).
+RLS note: user_job_matches is scoped by can_view_org_resource(
+organization_id, user_id) as of migration 0015 (previously
+user_id = auth.uid() only), unlike jobs (backend-owned, service_role).
 This repository must be constructed with a normal user-scoped
 SupabaseClient (access_token path), not use_service_role=True.
-Confirmed against migrations/0001_init_schema.sql before writing this.
+
+organization_id note (migration 0007, bug found and fixed 2026-07-29):
+user_job_matches.organization_id has been NOT NULL, no default, since
+migration 0007 -- but upsert_match()'s INSERT payload never set it,
+because the column post-dated the method and nothing forced a look at
+it again. This went unnoticed because every real matching run between
+0007 (2026-07-26) and this fix only ever hit the UPDATE branch (existing
+tracks re-scoring already-matched jobs, which doesn't touch
+organization_id) -- confirmed by checking matching_runs' history
+directly: no INSERT into user_job_matches had been attempted since the
+column went NOT NULL. Any brand-new track's first matching run, or any
+newly-ingested job, would have hard-failed on the very first job that
+cleared Stage 1, aborting the whole run silently (caught by
+run_matching_for_track_tracked's except-clause, surfaced only as a
+generic matching_runs.status='failed' row with no indication of the
+real cause). Fixed by requiring organization_id on upsert_match() and
+sourcing it from the track's own organization_id in matching_service.py,
+never from a caller-supplied value.
 
 No native upsert support exists in SupabaseClient yet (confirmed --
 no resolution=merge-duplicates/on_conflict support in db/client.py),
@@ -53,12 +71,23 @@ class UserJobMatchRepository:
         job_id: UUID,
         cv_track_id: UUID,
         match_score: float,
+        organization_id: UUID,
         ai_rationale: str | None = None,
     ) -> UserJobMatch:
         """Create a new match row, or update the existing one if this
         (user, job, track) triple was already scored -- re-scoring
         should overwrite, not duplicate (DB has a unique constraint on
         this triple that would otherwise reject a second insert).
+
+        organization_id is required and only ever used on the INSERT
+        path -- it can't legitimately change for an existing match (a
+        track doesn't move between orgs), so the UPDATE payload
+        deliberately never touches it, same reasoning as ai_rationale's
+        own update guard below. Caller must pass the match's owning
+        track's own organization_id (matching_service.py sources this
+        from track.organization_id, never from whichever caller
+        triggered the run) -- see this module's docstring for why this
+        parameter exists at all (migration 0007 bug, fixed 2026-07-29).
 
         On update, ai_rationale is only written when the caller passes
         one explicitly. Without this guard, re-running matching_service's
@@ -88,6 +117,7 @@ class UserJobMatchRepository:
             "cv_track_id": str(cv_track_id),
             "match_score": match_score,
             "ai_rationale": ai_rationale,
+            "organization_id": str(organization_id),
         }
         rows = self.db.insert(self.TABLE, payload)
         return UserJobMatch.model_validate(rows[0])
@@ -154,23 +184,32 @@ class MatchingRunRepository:
     """Tracks status of background matching runs (matching_runs table),
     for real status-polling via GET /tracks/{id}/match-status/{run_id}.
 
-    Same RLS rule as UserJobMatchRepository: must be constructed with a
-    user-scoped SupabaseClient, not use_service_role=True -- confirmed
-    against migrations/0004_add_matching_runs.sql before writing this.
+    RLS: can_view_org_resource(organization_id, user_id) as of migration
+    0016 (previously user_id = auth.uid() only, from migration
+    0004_add_matching_runs.sql) -- must be constructed with a
+    user-scoped SupabaseClient, not use_service_role=True, same rule as
+    UserJobMatchRepository.
     """
     TABLE = "matching_runs"
 
     def __init__(self, db: SupabaseClient) -> None:
         self.db = db
 
-    def create_run(self, user_id: UUID, cv_track_id: UUID) -> MatchingRun:
+    def create_run(self, user_id: UUID, cv_track_id: UUID, organization_id: UUID) -> MatchingRun:
         """Called at the start of a matching run, before any jobs are
         processed -- gives the caller a run_id to return to the client
         immediately, before jobs_total is even known.
+
+        organization_id is required (migration 0016, matching_runs'
+        organization_id column is NOT NULL) -- caller must pass the
+        run's owning track's own organization_id (track.user_id's org),
+        not necessarily the triggering caller's, same sourcing rule as
+        matching_service.py's run_matching_for_track.
         """
         payload = {
             "user_id": str(user_id),
             "cv_track_id": str(cv_track_id),
+            "organization_id": str(organization_id),
             "status": "running",
             "jobs_processed": 0,
         }

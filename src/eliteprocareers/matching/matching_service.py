@@ -10,12 +10,28 @@ scripts/run_matching.py, tests, or a future API endpoint.
 Uses the service_role key for reading jobs/profile/track data (backend
 operation, same trust level as ingestion). Writing matches via
 UserJobMatchRepository here also goes through service_role, which
-bypasses that table's per-user RLS policy (user_id = auth.uid()) --
-acceptable for this backend-run script since it's explicitly scoped to
-one user_id at a time, but a future per-user API endpoint calling this
+bypasses that table's can_view_org_resource() RLS policy -- acceptable
+for this backend-run script since it's explicitly scoped to one
+user_id at a time, but a future per-user API endpoint calling this
 must NOT reuse service_role for the match-write step; it should
 construct a user-scoped SupabaseClient instead, per
 matching/repository.py's docstring.
+
+organization_id sourcing (fixed 2026-07-29, see matching/repository.py's
+docstring for the bug this replaced): run_matching_for_track no longer
+accepts organization_id as a parameter. It reads track.organization_id
+-- the CV track's own, authoritative org -- and uses that for both the
+match upsert and maybe_auto_apply(), instead of trusting whichever
+caller happened to trigger the run. This fixes two real problems at
+once: (1) the user_job_matches INSERT bug (organization_id was never
+being set at all), and (2) the assignment-awareness gap trigger_matching's
+docstring flagged 2026-07-28 -- an assigned staff member triggering a
+run on a candidate's track now correctly scopes every write to the
+candidate's own org, not the staff member's caller-supplied one (today
+these are always the same org, since multi-org-per-user is still
+hard-blocked at one -- but sourcing from the track is correct
+regardless of whether that constraint ever lifts, and doesn't rely on
+every future caller remembering to pass the right value).
 """
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -66,7 +82,6 @@ def run_matching_for_track(
     track_id: UUID,
     db: SupabaseClient | None = None,
     on_progress: Callable[[int, int], None] | None = None,
-    organization_id: UUID | None = None,
 ) -> MatchingSummary:
     """Runs Stage-1 + Stage-2 for one CV track against every job
     currently in the `jobs` table.
@@ -79,11 +94,13 @@ def run_matching_for_track(
     score -- a low real score is still useful signal, unlike a
     Stage-1 FAIL which isn't a scoring question at all.
 
-    organization_id (migration 0009): after a passing match is scored,
-    maybe_auto_apply() checks the track's auto-apply config and creates
-    a queued application if it clears the threshold. Best-effort --
-    an auto-apply failure for one job never stops matching for the
-    rest; see maybe_auto_apply's own docstring.
+    organization_id is read from track.organization_id (see this
+    module's docstring) and used for both the match upsert and, after a
+    passing match is scored, maybe_auto_apply() (migration 0009), which
+    checks the track's auto-apply config and creates a queued
+    application if it clears the threshold. Best-effort -- an
+    auto-apply failure for one job never stops matching for the rest;
+    see maybe_auto_apply's own docstring.
 
     on_progress, if given, is called as on_progress(jobs_done, jobs_total)
     after every job (pass or fail) -- stays a no-op by default so the
@@ -108,6 +125,14 @@ def run_matching_for_track(
     track = track_repo.get_track(track_id)
     if track is None:
         raise ValueError(f"No cv_tracks row for track_id={track_id}")
+    if track.organization_id is None:
+        # Should be unreachable -- cv_tracks.organization_id has been
+        # NOT NULL since migration 0007 -- but this is the write path
+        # that broke silently last time a NOT NULL assumption like this
+        # one went unchecked (see matching/repository.py's docstring),
+        # so fail loudly here rather than let a None reach upsert_match.
+        raise ValueError(f"cv_tracks row {track_id} has no organization_id")
+    organization_id = track.organization_id
 
     jobs = job_repo.list_all()
 
@@ -143,6 +168,7 @@ def run_matching_for_track(
             job_id=job.id,
             cv_track_id=track_id,
             match_score=score,
+            organization_id=organization_id,
         )
 
         try:
@@ -189,7 +215,6 @@ def run_matching_for_track_tracked(
     track_id: UUID,
     run_id: UUID,
     db: SupabaseClient,
-    organization_id: UUID | None = None,
 ) -> None:
     """Wraps run_matching_for_track with status tracking in matching_runs,
     for the background-task path triggered by POST /tracks/{id}/match.
@@ -203,6 +228,12 @@ def run_matching_for_track_tracked(
     service_role) since MatchingRunRepository relies on matching_runs'
     RLS policy, same rule as UserJobMatchRepository and the existing
     call in tracks.py's trigger_matching().
+
+    user_id here is the CANDIDATE's id (track.user_id), not necessarily
+    the caller who triggered the run -- see tracks.py's trigger_matching()
+    for the assignment-aware fix this depends on. organization_id is no
+    longer a parameter here; run_matching_for_track reads it from the
+    track itself.
     """
     run_repo = MatchingRunRepository(db)
 
@@ -212,9 +243,7 @@ def run_matching_for_track_tracked(
         run_repo.update_progress(run_id, jobs_processed=done, jobs_total=total)
 
     try:
-        run_matching_for_track(
-            user_id, track_id, db=db, on_progress=_on_progress, organization_id=organization_id
-        )
+        run_matching_for_track(user_id, track_id, db=db, on_progress=_on_progress)
         run_repo.mark_completed(run_id)
     except Exception as exc:
         run_repo.mark_failed(run_id, str(exc))

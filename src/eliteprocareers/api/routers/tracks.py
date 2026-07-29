@@ -101,9 +101,26 @@ def create_track(
     comes from the resolved token (current_user.id), never from the
     request body -- same rule dependencies.py documents for every other
     handler.
+
+    organization_id (fixed 2026-07-29): required by cv_tracks' NOT NULL
+    constraint since migration 0007 -- see TrackRepository.create_track's
+    docstring for the bug this closes. A user with no organization
+    membership (current_user.organization_id is None) gets a clear 400
+    here instead of a raw Postgres NOT NULL error -- shouldn't happen in
+    practice (every real candidate has been backfilled into
+    organization_members since migration 0007), but this is a real,
+    reachable edge case for a token that authenticates before that
+    backfill/signup step completes, not a hypothetical.
     """
+    if current_user.organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your account isn't associated with an organization yet.",
+        )
     return TrackRepository(current_user.db).create_track(
-        user_id=current_user.id, **payload.model_dump()
+        user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        **payload.model_dump(),
     )
 
 
@@ -150,22 +167,29 @@ def trigger_matching(
     {run_id} for real completion status -- replaces the earlier
     client-side timed-poll workaround against .../matches.
 
-    Scope boundary, deliberate (2026-07-28): unlike every other
-    endpoint in this router, this one is NOT yet assignment-aware.
-    run_repo.create_run() and run_matching_for_track_tracked() both
-    still use current_user.id, not track.user_id -- fine for the
-    normal self-service case (they're the same value), but for an
-    assigned manager/staff triggering a run on an assigned candidate's
-    track, this would misattribute the resulting user_job_matches rows
-    to the staff member instead of the candidate. Also, matching_runs
-    itself has no organization_id column and RLS restricted to
-    user_id = auth.uid() only (confirmed by reading it directly) --
-    so even fixing the user_id here wouldn't let the candidate or other
-    assigned staff poll the run's status afterward. Needs real design
-    work in matching_service.py, not a one-line change -- not done
-    this session, flagged rather than silently left looking finished.
+    Assignment-aware as of migration 0016 (fixes the gap flagged
+    2026-07-28): run_repo.create_run() and run_matching_for_track_tracked()
+    both now use track.user_id/track.organization_id -- the candidate's
+    own identity -- not current_user.id/current_user.organization_id.
+    For the normal self-service case these are the same value, so
+    nothing changes there; for an assigned manager/staff triggering a
+    run on an assigned candidate's track, the resulting user_job_matches
+    rows and the matching_runs row itself are now correctly attributed
+    to the candidate, and (via matching_runs' new can_view_org_resource()
+    RLS, migration 0016) visible to the candidate and any other assigned
+    staff afterward -- not just literally the triggering caller.
     """
     track = _get_owned_track(track_id, current_user)
+    if track.organization_id is None:
+        # Should be unreachable -- cv_tracks.organization_id has been
+        # NOT NULL since migration 0007 -- but fail with a clear 500
+        # here rather than let a None reach create_run() and surface as
+        # a raw Postgres NOT NULL violation instead. Same reasoning as
+        # matching_service.py's own guard on this.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Track has no organization_id.",
+        )
 
     run_repo = MatchingRunRepository(current_user.db)
     existing_run = run_repo.get_running_run_for_track(track_id)
@@ -179,14 +203,17 @@ def trigger_matching(
             ),
         )
 
-    run = run_repo.create_run(user_id=current_user.id, cv_track_id=track_id)
+    run = run_repo.create_run(
+        user_id=track.user_id,
+        cv_track_id=track_id,
+        organization_id=track.organization_id,
+    )
     background_tasks.add_task(
         run_matching_for_track_tracked,
-        current_user.id,
+        track.user_id,
         track_id,
         run.id,
         current_user.db,
-        current_user.organization_id,
     )
     return MatchTriggerResponse(
         track_id=track_id,
@@ -212,14 +239,24 @@ def get_match_status(
 ) -> MatchingRun:
     """Poll endpoint for a matching run's real status -- running,
     completed, or failed -- with jobs_processed/jobs_total for progress.
-    track_id is verified via _get_owned_track (404 if not owned) even
-    though the run itself already carries user_id, for the same
-    can't-enumerate-other-users'-ids reason as every other track_id path
-    param in this router.
+
+    track_id is verified via _get_owned_track (404 if not visible) for
+    the same can't-enumerate-other-users'-ids reason as every other
+    track_id path param in this router. There is deliberately NO
+    `run.user_id != current_user.id` check here anymore -- that used to
+    exist and, like the old _get_visible_track check it mirrored, was
+    silently overriding matching_runs' own RLS: an assigned staff
+    member triggering a run correctly gets a run attributed to the
+    candidate (track.user_id, since migration 0016 above), so a literal
+    current_user.id match would then reject that same staff member's
+    own poll of the run they just started. RLS (can_view_org_resource(),
+    migration 0016) already scopes get_run() correctly; this only needs
+    to confirm the run actually belongs to this track_id, not to
+    re-check who's allowed to see it.
     """
     _get_owned_track(track_id, current_user)
     run = MatchingRunRepository(current_user.db).get_run(run_id)
-    if run is None or run.user_id != current_user.id or run.cv_track_id != track_id:
+    if run is None or run.cv_track_id != track_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Matching run not found."
         )

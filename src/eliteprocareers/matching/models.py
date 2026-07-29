@@ -5,10 +5,14 @@ table. Rows are created by the scoring engine (scoring/embeddings.py)
 running compute_match_score() against a real Job + CVTrack pair.
 
 RLS note: unlike jobs (backend-owned, service_role writes), this table
-is per-user with a user-scoped RLS policy (user_id = auth.uid()) -- the
-repository must be constructed with a normal user-scoped SupabaseClient,
-not use_service_role=True. Confirmed against migrations/0001_init_schema.sql
-and 0002_optimize_rls_and_indexes.sql before writing this model.
+is scoped by can_view_org_resource(organization_id, user_id) as of
+migration 0015 (previously user_id = auth.uid() only, from
+migrations/0001_init_schema.sql and 0002_optimize_rls_and_indexes.sql)
+-- own rows, org owner/admin, full-sharing org member, or assigned
+staff. The repository must still be constructed with a normal
+user-scoped SupabaseClient, not use_service_role=True, for the same
+reason as before: service_role bypasses RLS entirely, which is wrong
+for a write that must be scoped to the caller's real visibility.
 """
 from datetime import datetime
 from uuid import UUID
@@ -43,6 +47,12 @@ class MatchingRun(BaseModel):
     id: UUID | None = None
     user_id: UUID
     cv_track_id: UUID
+    # organization_id (migration 0016): required now that matching_runs'
+    # RLS is can_view_org_resource()-based instead of user_id = auth.uid()
+    # only -- see migration 0016's comment for why the run-log needed
+    # the same assignment-aware visibility as the five candidate-data
+    # tables.
+    organization_id: UUID
     status: str = "running"  # running | completed | failed
     jobs_total: int | None = None
     jobs_processed: int = 0
