@@ -121,6 +121,23 @@ class OrganizationRepository:
         )
         return UUID(result)
 
+    def delete_organization(self, organization_id: UUID) -> UUID:
+        """Atomic -- see delete_organization() in migration 0018.
+        Deliberately scoped to empty orgs only: refuses if the org has
+        any other members, if it's the caller's only organization
+        membership, or if any of the six NOT-NULL-organization_id
+        tables (candidate_profiles, cv_tracks, applications,
+        matching_runs, user_job_matches, generated_documents) have a
+        row referencing it. This is the fix for the gap flagged in the
+        v37 handover: the one-click '+ New org' link had no
+        corresponding undo. Raises SupabaseError with the function's
+        own message for every guard above, plus "Not authenticated"
+        and "You are not a member of that organization" / "Only an
+        owner can delete an organization" for the auth/role checks.
+        """
+        result = self.db.rpc("delete_organization", {"p_organization_id": str(organization_id)})
+        return UUID(result)
+
     # ------------------------------------------------------------------
     # Candidate assignments (migration 0015 -- assigned_only sharing)
     # ------------------------------------------------------------------

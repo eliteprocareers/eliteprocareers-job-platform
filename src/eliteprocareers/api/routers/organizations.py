@@ -167,6 +167,32 @@ def leave_organization(current_user: CurrentUser = Depends(get_current_user)) ->
         raise _friendly_supabase_error(exc, fallback_status=status.HTTP_409_CONFLICT) from exc
 
 
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+def delete_organization(current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Permanently deletes this request's active org context (same
+    X-Organization-Id / oldest-membership resolution as every other
+    endpoint here). Requires delete_organization permission (owner
+    only -- see organizations/permissions.py); the RPC itself
+    re-checks owner-only too, same belt-and-suspenders as every other
+    org-boundary RPC in this module.
+
+    Deliberately narrow: only succeeds for an org with no other
+    members, that isn't the caller's only organization, and that has
+    no candidates/tracks/applications/matching-runs/documents attached
+    (see delete_organization() in migration 0018 for the full guard
+    list and why). This is NOT a "delete my org and all its data"
+    operation -- an org with real data can't be deleted through this
+    endpoint at all. Built specifically to fix the gap flagged in the
+    v37 handover: the one-click '+ New org' link had no undo.
+    """
+    require_permission(current_user, Permission.delete_organization)
+    organization_id = _require_org(current_user)
+    try:
+        OrganizationRepository(current_user.db).delete_organization(organization_id)
+    except SupabaseError as exc:
+        raise _friendly_supabase_error(exc, fallback_status=status.HTTP_409_CONFLICT) from exc
+
+
 @router.get("/members", response_model=list[OrganizationMember])
 def list_members(current_user: CurrentUser = Depends(get_current_user)) -> list[OrganizationMember]:
     require_permission(current_user, Permission.view_members)

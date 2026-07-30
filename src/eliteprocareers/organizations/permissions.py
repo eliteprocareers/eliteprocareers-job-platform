@@ -40,6 +40,13 @@ class Permission(str, Enum):
     # Organization administration
     manage_org_settings = "manage_org_settings"  # rename, org_type
     manage_owners = "manage_owners"  # grant/revoke 'owner' on someone else
+    delete_organization = "delete_organization"  # permanently delete the
+    # org itself (migration 0018) -- deliberately its own permission
+    # rather than folded into manage_org_settings (which admins also
+    # have): destroying the org is a materially bigger, one-way action
+    # than renaming it, and owner-only, same tier as manage_owners.
+    # The RPC re-checks owner-only itself too (belt-and-suspenders,
+    # same pattern as every other org-boundary RPC in this codebase).
     manage_members = "manage_members"  # remove members, change non-owner roles
     view_members = "view_members"
     manage_invites = "manage_invites"  # create/revoke invites
@@ -73,7 +80,7 @@ class Permission(str, Enum):
 # than "manager = admin minus X plus Y" chains that drift over time.
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "owner": frozenset(Permission),  # everything
-    "admin": frozenset(Permission) - {Permission.manage_owners},
+    "admin": frozenset(Permission) - {Permission.manage_owners, Permission.delete_organization},
     "manager": frozenset(
         {
             Permission.view_members,
