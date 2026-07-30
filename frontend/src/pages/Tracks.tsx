@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import type { CVTrack } from '../lib/types';
 import { useAuth } from '../context/AuthContext';
+import OrgSwitcher from '../components/OrgSwitcher';
 
 export default function Tracks() {
   const { logout, email } = useAuth();
@@ -30,6 +31,7 @@ export default function Tracks() {
         <h1 className="text-2xl font-semibold text-slate-100">CV Tracks</h1>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-400">{email}</span>
+          <OrgSwitcher />
           <Link to="/profile" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
             Profile
           </Link>

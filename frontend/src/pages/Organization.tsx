@@ -6,6 +6,7 @@ import axios from 'axios';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { hasPermission } from '../lib/permissions';
+import OrgSwitcher from '../components/OrgSwitcher';
 import type {
   CandidateAssignment,
   CreateAssignmentRequest,
@@ -377,6 +378,13 @@ export default function Organization() {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-400">{email}</span>
+          <OrgSwitcher />
+          <Link
+            to="/organizations/new"
+            className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2"
+          >
+            + New org
+          </Link>
           <Link to="/tracks" className="text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-3 py-2">
             Tracks
           </Link>
