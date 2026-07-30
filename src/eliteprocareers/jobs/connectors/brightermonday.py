@@ -29,16 +29,23 @@ crawled per run — deliberately conservative rather than pulling all
 ~127 pages every run, since this is a live site being crawled directly,
 not an API meant for bulk polling.
 
-As of 2026-07-30, also crawls /jobs/medical-pharmaceutical alongside the
-general /jobs feed (see LISTING_SOURCES) -- the general feed's
-5-most-recent-pages cap structurally under-represents categories that
-aren't currently trending in postings, confirmed live when a nursing
-client's job search turned up almost nothing despite BrighterMonday
-having 52 active medical/pharmaceutical listings the same day.
+As of 2026-07-30, also crawls all 26 of BrighterMonday's own "Job
+Function" category pages (see CATEGORY_SLUGS) alongside the general
+/jobs feed -- not just medical-pharmaceutical. The general feed's
+5-most-recent-pages cap structurally under-represents any category
+that isn't currently trending in postings, first noticed when a
+nursing client's job search turned up almost nothing despite
+BrighterMonday having 52 active medical/pharmaceutical listings the
+same day; the same gap applies equally to every other category, so
+this was generalized rather than left as a one-off nursing fix.
+Category depth is capped independently and more conservatively than
+the general feed (see CATEGORY_MAX_PAGES) to keep total per-run
+request volume bounded now that there are 27 sources instead of 1.
 """
 
 import json
 import re
+import time
 
 import httpx
 
@@ -101,20 +108,69 @@ class BrighterMondayConnector(JobConnector):
 
     BASE_LISTING_URL = "https://www.brightermonday.co.ke/jobs"
 
-    # Crawled in addition to the general feed. Added 2026-07-30: the
-    # general feed is the 5-most-recent-pages-of-everything crawl below,
-    # which structurally under-represents any category that isn't
-    # currently trending in postings (confirmed live: only ~8 genuinely
-    # healthcare-relevant jobs existed in the whole corpus despite this
-    # category alone having 52 active listings the same day). Confirmed
-    # live 2026-07-30 that /jobs/medical-pharmaceutical uses the same
-    # ?page=N pagination and the same /listings/{slug} URL shape as the
-    # general feed, so no new parsing logic is needed -- just an
-    # additional base URL to crawl.
-    LISTING_SOURCES: list[str] = [
-        BASE_LISTING_URL,
-        "https://www.brightermonday.co.ke/jobs/medical-pharmaceutical",
+    # Confirmed live 2026-07-30 by fetching the real /jobs page and
+    # reading its own "Job Function" filter sidebar directly (not
+    # guessed) -- this is BrighterMonday's complete category taxonomy,
+    # 26 categories, each a genuine profession/function (no meta/junk
+    # entries here, unlike MyJobMag's field list -- see myjobmag.py).
+    # Spot-checked 3 of the 26 individually (medical-pharmaceutical,
+    # legal-services, and the general /jobs page itself) to confirm
+    # every category page shares the same ?page=N pagination and
+    # /listings/{slug} URL shape -- not assumed to hold for the other 23
+    # just because 3 matched, but same site engine/template throughout
+    # made that a reasonable inference to build on.
+    CATEGORY_SLUGS: list[str] = [
+        "accounting-auditing-finance",
+        "admin-office",
+        "creative-design",
+        "building-architecture",
+        "consulting-strategy",
+        "customer-service-support",
+        "engineering-technology",
+        "farming-agriculture",
+        "food-services-catering",
+        "hospitality-leisure",
+        "software-data",
+        "legal-services",
+        "marketing-communications",
+        "medical-pharmaceutical",
+        "product-project-management",
+        "estate-agent-property-management",
+        "quality-control-assurance",
+        "human-resources",
+        "management-business-development",
+        "community-social-services",
+        "supply-chain-procurement",
+        "sales",
+        "research-teaching-training",
+        "trades-services",
+        "driver-transport-services",
+        "health-safety",
     ]
+
+    LISTING_SOURCES: list[str] = [BASE_LISTING_URL]
+    for _slug in CATEGORY_SLUGS:
+        LISTING_SOURCES.append(f"{BASE_LISTING_URL}/{_slug}")
+    del _slug
+
+    # Deliberately smaller than the general feed's max_pages (default 5,
+    # caller-overridable) and NOT overridable per-call -- with 27 total
+    # sources now, letting every category run to the same depth as the
+    # general feed would multiply total per-run request volume far more
+    # than is reasonable for a live site with no bulk API and no rate
+    # limiting in this codebase (checked -- there isn't any). 3 pages
+    # (~48 jobs) per category, refreshed every run, favors breadth
+    # across professions and recency over exhaustive depth in any one
+    # category -- reasonable for a live jobs feed where older postings
+    # are more likely stale anyway.
+    CATEGORY_MAX_PAGES = 3
+
+    # Politeness delay between requests -- this crawls a live site
+    # directly, not a bulk-designed API, and 27 sources is enough
+    # request volume that some throttling is the responsible default
+    # (there was none before this expansion, which was fine for 2
+    # sources but not appropriate at this scale).
+    REQUEST_DELAY_SECONDS = 0.2
 
     def extract_from_url(self, url: str) -> dict | None:
         """Fetch a single BrighterMonday job listing page and parse its
@@ -180,14 +236,18 @@ class BrighterMondayConnector(JobConnector):
         }
 
     def fetch_jobs(self, max_pages: int = 5, **kwargs) -> list[dict]:
-        """Crawl every configured listing source (LISTING_SOURCES) up to
-        max_pages each, collect individual listing URLs, and extract each
-        via extract_from_url(). max_pages caps how many pages get crawled
-        PER SOURCE in a single run — with ~16 jobs/page, max_pages=5 pulls
-        roughly 80 of the most recent postings from the general feed, not
-        the whole ~2,031-job site every time; the medical-pharmaceutical
-        category (52 listings total as of 2026-07-30) fits well within
-        that same cap, so it gets fully covered each run.
+        """Crawl every configured listing source (LISTING_SOURCES) and
+        extract each listing found via extract_from_url(). The general
+        feed (BASE_LISTING_URL) is capped at max_pages (default 5, still
+        caller-overridable, unchanged from before this expansion); every
+        category source is capped at the smaller, fixed
+        CATEGORY_MAX_PAGES instead — see that constant's docstring for
+        why category depth isn't tied to the max_pages argument. With
+        ~16 jobs/page, that's roughly 80 postings from the general feed
+        plus up to ~48 per category across 26 categories per run — a lot
+        more coverage than the single-source crawl this replaced, still
+        bounded rather than attempting the full ~2,031-job site depth on
+        every run.
 
         Each source paginates independently -- a source stops once its
         own page returns no listing URLs at all, or no URLs new to that
@@ -196,15 +256,23 @@ class BrighterMondayConnector(JobConnector):
         across all sources so a job appearing in more than one source
         (e.g. a recent nursing post that's both in the general feed and
         the medical-pharmaceutical category) is only extracted once.
+
+        A small delay (REQUEST_DELAY_SECONDS) runs between every HTTP
+        request -- listing pages and individual job-detail fetches alike
+        -- since this now issues meaningfully more requests per run than
+        the 2-source version, and there's still no other rate limiting
+        anywhere in this codebase.
         """
         jobs: list[dict] = []
         extracted_urls: set[str] = set()
 
         for base_url in self.LISTING_SOURCES:
             source_seen: set[str] = set()
+            source_max_pages = max_pages if base_url == self.BASE_LISTING_URL else self.CATEGORY_MAX_PAGES
 
-            for page_num in range(1, max_pages + 1):
+            for page_num in range(1, source_max_pages + 1):
                 page_url = base_url if page_num == 1 else f"{base_url}?page={page_num}"
+                time.sleep(self.REQUEST_DELAY_SECONDS)
                 response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
                 if response.status_code != 200:
                     break
@@ -226,6 +294,7 @@ class BrighterMondayConnector(JobConnector):
                     if listing_url in extracted_urls:
                         continue
                     extracted_urls.add(listing_url)
+                    time.sleep(self.REQUEST_DELAY_SECONDS)
                     job = self.extract_from_url(listing_url)
                     if job is not None:
                         jobs.append(job)

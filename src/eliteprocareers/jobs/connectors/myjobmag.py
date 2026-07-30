@@ -22,16 +22,20 @@ assumed from convention:
 Bulk polling reuses extract_from_url() per job, same pattern as
 BrighterMonday.
 
-As of 2026-07-30, also crawls /jobs-by-field/medical alongside the
-general /jobs feed (see LISTING_SOURCES) -- same reasoning as
-BrighterMonday's medical-pharmaceutical addition. Confirmed live this
-category paginates as /jobs-by-field/medical/{n} (direct number, no
-"page" segment), a different shape from the general feed's
-/jobs/page/{n} -- not assumed to match.
+As of 2026-07-30, also crawls 45 of MyJobMag's own "field" category
+pages (see CATEGORY_SLUGS) alongside the general /jobs feed -- not just
+medical. Same reasoning as BrighterMonday's equivalent expansion: the
+general feed under-represents any category that isn't currently
+trending, and that gap applies to every profession, not just nursing.
+Confirmed live this category style paginates as /jobs-by-field/{slug}/
+{n} (direct number, no "page" segment) -- different from the general
+feed's /jobs/page/{n} -- so LISTING_SOURCES carries a page_style per
+source rather than assuming one URL-building rule fits every source.
 """
 
 import html
 import re
+import time
 
 import httpx
 
@@ -101,18 +105,77 @@ class MyJobMagConnector(JobConnector):
 
     BASE_LISTING_URL = f"{BASE_URL}/jobs"
 
-    # Crawled in addition to the general feed, same reasoning as the
-    # BrighterMonday connector's LISTING_SOURCES (added 2026-07-30): the
-    # general feed under-represents any category that isn't currently
-    # trending in postings. Confirmed live 2026-07-30 that
-    # /jobs-by-field/medical uses a DIFFERENT pagination shape from the
-    # general feed -- direct /{n} (e.g. /jobs-by-field/medical/2), not
-    # /page/{n} -- so each source carries its own page_style rather than
-    # assuming one URL-building rule fits every source.
-    LISTING_SOURCES: list[tuple[str, str]] = [
-        (BASE_LISTING_URL, "page"),
-        (f"{BASE_URL}/jobs-by-field/medical", "direct"),
+    # Confirmed live 2026-07-30 by fetching /jobs-by-field directly and
+    # reading its own field list. MyJobMag's raw list has 51 entries;
+    # excluded 6 that aren't real professional categories (they're
+    # meta-filters or non-employment): "Bursary and Scholarships",
+    # "General", "Graduate Jobs", "Internships", "RFP / RFQ / EOI",
+    # "Volunteer". The remaining 45 are genuine fields. Spot-checked 2
+    # of the 45 individually (medical, sales-marketing -- one small
+    # category, one of the largest) to confirm both the direct /{n}
+    # pagination shape and the /job/{slug} URL shape hold beyond just
+    # the medical category added earlier -- not assumed to hold for all
+    # 45 just because 2 matched, but same site engine/template
+    # throughout made that a reasonable inference to build on.
+    CATEGORY_SLUGS: list[str] = [
+        "administration",
+        "agriculture",
+        "art",
+        "aviation",
+        "banking",
+        "caregiver-nanny-social-workers",
+        "catering",
+        "building-and-construction",
+        "consultancy",
+        "content-editorial",
+        "customer-care",
+        "research-data-analysis",
+        "travel-and-logistics",
+        "education",
+        "engineering",
+        "safety-and-environment-hse",
+        "accounting-audit",
+        "hospitality",
+        "human-resources",
+        "information-technology",
+        "insurance",
+        "janitorial-services",
+        "legal",
+        "logistics",
+        "manufacturing",
+        "marketing-communication",
+        "media",
+        "medical",
+        "ngo",
+        "oil-refining-and-marketing",
+        "pharmaceutical",
+        "procurement-store-keeping",
+        "product-management",
+        "project-management",
+        "real-estate",
+        "research",
+        "risk-compliance",
+        "sales-marketing",
+        "science",
+        "security",
+        "maritime",
+        "sports-personal-care",
+        "strategic-top-management",
+        "travels-amp-tours",
+        "ux-design-architecture",
     ]
+
+    LISTING_SOURCES: list[tuple[str, str]] = [(BASE_LISTING_URL, "page")] + [
+        (f"{BASE_URL}/jobs-by-field/{slug}", "direct") for slug in CATEGORY_SLUGS
+    ]
+
+    # See BrighterMondayConnector.CATEGORY_MAX_PAGES for the full
+    # reasoning -- same bounded-volume tradeoff, applied here too now
+    # that this connector also crawls 45 category sources.
+    CATEGORY_MAX_PAGES = 3
+
+    # See BrighterMondayConnector.REQUEST_DELAY_SECONDS.
+    REQUEST_DELAY_SECONDS = 0.2
 
     @staticmethod
     def _page_url(base_url: str, page_style: str, page_num: int) -> str:
@@ -181,19 +244,25 @@ class MyJobMagConnector(JobConnector):
         }
 
     def fetch_jobs(self, max_pages: int = 5, **kwargs) -> list[dict]:
-        """Crawl every configured listing source (LISTING_SOURCES) up to
-        max_pages each. Same per-source-pagination-stop / cross-source-
-        dedup reasoning as BrighterMondayConnector.fetch_jobs -- see that
-        docstring for the full explanation.
+        """Crawl every configured listing source (LISTING_SOURCES). The
+        general feed (BASE_LISTING_URL) is capped at max_pages (default
+        5, still caller-overridable, unchanged from before this
+        expansion); every category source is capped at the smaller,
+        fixed CATEGORY_MAX_PAGES instead. Same per-source-pagination-
+        stop / cross-source-dedup / politeness-delay reasoning as
+        BrighterMondayConnector.fetch_jobs -- see that docstring for the
+        full explanation.
         """
         jobs: list[dict] = []
         extracted_urls: set[str] = set()
 
         for base_url, page_style in self.LISTING_SOURCES:
             source_seen: set[str] = set()
+            source_max_pages = max_pages if base_url == self.BASE_LISTING_URL else self.CATEGORY_MAX_PAGES
 
-            for page_num in range(1, max_pages + 1):
+            for page_num in range(1, source_max_pages + 1):
                 page_url = self._page_url(base_url, page_style, page_num)
+                time.sleep(self.REQUEST_DELAY_SECONDS)
                 response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
                 if response.status_code != 200:
                     break
@@ -212,6 +281,7 @@ class MyJobMagConnector(JobConnector):
                     if listing_url in extracted_urls:
                         continue
                     extracted_urls.add(listing_url)
+                    time.sleep(self.REQUEST_DELAY_SECONDS)
                     job = self.extract_from_url(listing_url)
                     if job is not None:
                         jobs.append(job)
