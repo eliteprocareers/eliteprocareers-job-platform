@@ -28,6 +28,13 @@ extract_from_url() per job. max_pages caps how much of the site gets
 crawled per run — deliberately conservative rather than pulling all
 ~127 pages every run, since this is a live site being crawled directly,
 not an API meant for bulk polling.
+
+As of 2026-07-30, also crawls /jobs/medical-pharmaceutical alongside the
+general /jobs feed (see LISTING_SOURCES) -- the general feed's
+5-most-recent-pages cap structurally under-represents categories that
+aren't currently trending in postings, confirmed live when a nursing
+client's job search turned up almost nothing despite BrighterMonday
+having 52 active medical/pharmaceutical listings the same day.
 """
 
 import json
@@ -94,6 +101,21 @@ class BrighterMondayConnector(JobConnector):
 
     BASE_LISTING_URL = "https://www.brightermonday.co.ke/jobs"
 
+    # Crawled in addition to the general feed. Added 2026-07-30: the
+    # general feed is the 5-most-recent-pages-of-everything crawl below,
+    # which structurally under-represents any category that isn't
+    # currently trending in postings (confirmed live: only ~8 genuinely
+    # healthcare-relevant jobs existed in the whole corpus despite this
+    # category alone having 52 active listings the same day). Confirmed
+    # live 2026-07-30 that /jobs/medical-pharmaceutical uses the same
+    # ?page=N pagination and the same /listings/{slug} URL shape as the
+    # general feed, so no new parsing logic is needed -- just an
+    # additional base URL to crawl.
+    LISTING_SOURCES: list[str] = [
+        BASE_LISTING_URL,
+        "https://www.brightermonday.co.ke/jobs/medical-pharmaceutical",
+    ]
+
     def extract_from_url(self, url: str) -> dict | None:
         """Fetch a single BrighterMonday job listing page and parse its
         JSON-LD @graph into a dict shaped to match the `jobs` table columns.
@@ -158,37 +180,54 @@ class BrighterMondayConnector(JobConnector):
         }
 
     def fetch_jobs(self, max_pages: int = 5, **kwargs) -> list[dict]:
-        """Crawl BrighterMonday's /jobs listing pages, collect individual
-        listing URLs, and extract each via extract_from_url(). max_pages
-        caps how many listing pages get crawled in a single run — with
-        ~16 jobs/page, max_pages=5 pulls roughly 80 of the most recent
-        postings per run, not the whole ~2,031-job site every time.
+        """Crawl every configured listing source (LISTING_SOURCES) up to
+        max_pages each, collect individual listing URLs, and extract each
+        via extract_from_url(). max_pages caps how many pages get crawled
+        PER SOURCE in a single run — with ~16 jobs/page, max_pages=5 pulls
+        roughly 80 of the most recent postings from the general feed, not
+        the whole ~2,031-job site every time; the medical-pharmaceutical
+        category (52 listings total as of 2026-07-30) fits well within
+        that same cap, so it gets fully covered each run.
+
+        Each source paginates independently -- a source stops once its
+        own page returns no listing URLs at all, or no URLs new to that
+        source (real end-of-listings, not just a URL already pulled from
+        a different source). A single extracted_urls set is still used
+        across all sources so a job appearing in more than one source
+        (e.g. a recent nursing post that's both in the general feed and
+        the medical-pharmaceutical category) is only extracted once.
         """
         jobs: list[dict] = []
-        seen_urls: set[str] = set()
+        extracted_urls: set[str] = set()
 
-        for page_num in range(1, max_pages + 1):
-            page_url = (
-                self.BASE_LISTING_URL
-                if page_num == 1
-                else f"{self.BASE_LISTING_URL}?page={page_num}"
-            )
-            response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
-            if response.status_code != 200:
-                break
+        for base_url in self.LISTING_SOURCES:
+            source_seen: set[str] = set()
 
-            listing_urls = set(LISTING_URL_PATTERN.findall(response.text))
-            new_urls = listing_urls - seen_urls
-            if not new_urls:
-                # No new listing URLs on this page — likely past the last
-                # real page or hit a duplicate; stop rather than keep
-                # requesting pages that add nothing.
-                break
-            seen_urls |= new_urls
+            for page_num in range(1, max_pages + 1):
+                page_url = base_url if page_num == 1 else f"{base_url}?page={page_num}"
+                response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
+                if response.status_code != 200:
+                    break
 
-            for listing_url in new_urls:
-                job = self.extract_from_url(listing_url)
-                if job is not None:
-                    jobs.append(job)
+                listing_urls = set(LISTING_URL_PATTERN.findall(response.text))
+                if not listing_urls:
+                    break
+
+                new_to_source = listing_urls - source_seen
+                if not new_to_source:
+                    # No URLs new to THIS source's own pagination — real
+                    # end of listings or a repeated page. Doesn't trigger
+                    # just because another source already extracted the
+                    # same URLs (see extracted_urls check below).
+                    break
+                source_seen |= new_to_source
+
+                for listing_url in new_to_source:
+                    if listing_url in extracted_urls:
+                        continue
+                    extracted_urls.add(listing_url)
+                    job = self.extract_from_url(listing_url)
+                    if job is not None:
+                        jobs.append(job)
 
         return jobs

@@ -21,6 +21,13 @@ assumed from convention:
 
 Bulk polling reuses extract_from_url() per job, same pattern as
 BrighterMonday.
+
+As of 2026-07-30, also crawls /jobs-by-field/medical alongside the
+general /jobs feed (see LISTING_SOURCES) -- same reasoning as
+BrighterMonday's medical-pharmaceutical addition. Confirmed live this
+category paginates as /jobs-by-field/medical/{n} (direct number, no
+"page" segment), a different shape from the general feed's
+/jobs/page/{n} -- not assumed to match.
 """
 
 import html
@@ -94,6 +101,27 @@ class MyJobMagConnector(JobConnector):
 
     BASE_LISTING_URL = f"{BASE_URL}/jobs"
 
+    # Crawled in addition to the general feed, same reasoning as the
+    # BrighterMonday connector's LISTING_SOURCES (added 2026-07-30): the
+    # general feed under-represents any category that isn't currently
+    # trending in postings. Confirmed live 2026-07-30 that
+    # /jobs-by-field/medical uses a DIFFERENT pagination shape from the
+    # general feed -- direct /{n} (e.g. /jobs-by-field/medical/2), not
+    # /page/{n} -- so each source carries its own page_style rather than
+    # assuming one URL-building rule fits every source.
+    LISTING_SOURCES: list[tuple[str, str]] = [
+        (BASE_LISTING_URL, "page"),
+        (f"{BASE_URL}/jobs-by-field/medical", "direct"),
+    ]
+
+    @staticmethod
+    def _page_url(base_url: str, page_style: str, page_num: int) -> str:
+        if page_num == 1:
+            return base_url
+        if page_style == "page":
+            return f"{base_url}/page/{page_num}"
+        return f"{base_url}/{page_num}"
+
     def extract_from_url(self, url: str) -> dict | None:
         response = httpx.get(url, timeout=15.0, follow_redirects=True)
         response.raise_for_status()
@@ -153,29 +181,39 @@ class MyJobMagConnector(JobConnector):
         }
 
     def fetch_jobs(self, max_pages: int = 5, **kwargs) -> list[dict]:
+        """Crawl every configured listing source (LISTING_SOURCES) up to
+        max_pages each. Same per-source-pagination-stop / cross-source-
+        dedup reasoning as BrighterMondayConnector.fetch_jobs -- see that
+        docstring for the full explanation.
+        """
         jobs: list[dict] = []
-        seen_urls: set[str] = set()
+        extracted_urls: set[str] = set()
 
-        for page_num in range(1, max_pages + 1):
-            page_url = (
-                self.BASE_LISTING_URL
-                if page_num == 1
-                else f"{self.BASE_LISTING_URL}/page/{page_num}"
-            )
-            response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
-            if response.status_code != 200:
-                break
+        for base_url, page_style in self.LISTING_SOURCES:
+            source_seen: set[str] = set()
 
-            hrefs = set(LISTING_URL_PATTERN.findall(response.text))
-            full_urls = {BASE_URL + h for h in hrefs}
-            new_urls = full_urls - seen_urls
-            if not new_urls:
-                break
-            seen_urls |= new_urls
+            for page_num in range(1, max_pages + 1):
+                page_url = self._page_url(base_url, page_style, page_num)
+                response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
+                if response.status_code != 200:
+                    break
 
-            for listing_url in new_urls:
-                job = self.extract_from_url(listing_url)
-                if job is not None:
-                    jobs.append(job)
+                hrefs = set(LISTING_URL_PATTERN.findall(response.text))
+                if not hrefs:
+                    break
+                full_urls = {BASE_URL + h for h in hrefs}
+
+                new_to_source = full_urls - source_seen
+                if not new_to_source:
+                    break
+                source_seen |= new_to_source
+
+                for listing_url in new_to_source:
+                    if listing_url in extracted_urls:
+                        continue
+                    extracted_urls.add(listing_url)
+                    job = self.extract_from_url(listing_url)
+                    if job is not None:
+                        jobs.append(job)
 
         return jobs
