@@ -8,6 +8,8 @@ from eliteprocareers.api.routers.tracks import _get_owned_track
 from eliteprocareers.api.schemas import (
     ApplicationWithJob,
     CreateApplicationRequest,
+    DocumentsBundle,
+    SubmissionPackage,
     UpdateApplicationStatusRequest,
 )
 from eliteprocareers.jobs.repository import JobRepository
@@ -198,4 +200,67 @@ def update_application_status(
     _get_owned_application(track_id, application_id, current_user)
     return ApplicationRepository(current_user.db).update_status(
         application_id, status=payload.status, notes=payload.notes
+    )
+
+
+@router.get(
+    "/{track_id}/applications/{application_id}/submission-package",
+    response_model=SubmissionPackage,
+)
+def get_submission_package(
+    track_id: UUID,
+    application_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SubmissionPackage:
+    """The "one click" bundle: the real job posting to open plus whatever
+    CV/cover letter/screening answer has been generated for it, in a
+    single response. Read-only -- doesn't submit anything or change
+    application status (see ApplicationRepository's module docstring for
+    why real per-site auto-submit isn't built: no ATS gives third-party
+    platforms the credentials to submit on an employer's behalf, and the
+    alternative -- automating each site's human-facing form -- means
+    circumventing whatever anti-bot protection sits in front of it,
+    which this codebase doesn't do).
+
+    A candidate (or an assigned manager/staff acting for them) calls
+    this once an application reaches 'queued' or later, gets the job URL
+    and prepared documents in one shot, and completes the real
+    submission by hand on the employer's own site -- then calls
+    update_application_status separately to record it as 'submitted'.
+    Safe to call at any status (including 'draft', before anything's
+    been generated) -- documents fields are simply None if nothing
+    exists yet for this job, same as DocumentsBundle's own contract.
+    Doesn't gate on status itself; the response's own `status` field
+    lets the caller decide what UI/action makes sense (e.g. show a
+    warning if still 'queued' and inside its undo window).
+    """
+    application = _get_owned_application(track_id, application_id, current_user)
+
+    job_repo = JobRepository(current_user.db)
+    jobs = job_repo.get_jobs_by_ids([application.job_id])
+    job = jobs[0] if jobs else None
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The job this application points to no longer exists.",
+        )
+
+    doc_repo = DocumentRepository(current_user.db)
+    documents = DocumentsBundle(
+        cv=doc_repo.get_latest_document(track_id, DocType.cv, job_id=application.job_id),
+        cover_letter=doc_repo.get_latest_document(
+            track_id, DocType.cover_letter, job_id=application.job_id
+        ),
+        screening_answer=doc_repo.get_latest_document(
+            track_id, DocType.screening_answer, job_id=application.job_id
+        ),
+    )
+
+    return SubmissionPackage(
+        application_id=application_id,
+        status=application.status,
+        job_title=job.title,
+        job_company=job.company,
+        job_url=job.url,
+        documents=documents,
     )

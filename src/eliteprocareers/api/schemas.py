@@ -163,6 +163,29 @@ class DocumentsBundle(BaseModel):
     screening_answer: GeneratedDocument | None = None
 
 
+class SubmissionPackage(BaseModel):
+    """Response for GET /tracks/{track_id}/applications/{application_id}
+    /submission-package -- everything a human needs to complete a "one
+    click" manual submission: the real job posting to open, and
+    whatever's been generated for it (whichever exist -- same "no
+    documents generated" is a normal state as DocumentsBundle itself).
+
+    Deliberately does NOT submit anything or change application status
+    -- this is the bundling step of "auto-tailor and auto-queue
+    everything, but a human does the final click" (see
+    ApplicationRepository's module docstring for why real auto-submit
+    isn't built). status is included so a frontend can show the right
+    call-to-action state (e.g. "still in undo window" vs "ready") without
+    a second request.
+    """
+    application_id: UUID
+    status: ApplicationStatus
+    job_title: str
+    job_company: str
+    job_url: str | None
+    documents: DocumentsBundle
+
+
 class CreateApplicationRequest(BaseModel):
     """Body for POST /tracks/{track_id}/jobs/{job_id}/applications. Optional
     free-text notes only -- status always starts at 'draft', job_id/
