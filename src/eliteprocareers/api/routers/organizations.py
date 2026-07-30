@@ -78,11 +78,11 @@ def create_organization(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Organization:
     """Creates a new organization with the caller as owner. Atomic --
-    see create_organization_with_owner() in migration 0010. Fails with
-    a 409 if the caller already belongs to an org (one org per user,
-    for now -- see that migration's comments on why). No permission
-    check here -- this is how someone *gets* a role in the first
-    place, there's nothing to check permissions against yet.
+    see create_organization_with_owner() in migration 0011, un-gated
+    in migration 0017 (multi-org membership is now allowed -- the
+    caller no longer needs to not-belong to any other org first). No
+    permission check here -- this is how someone *gets* a role in the
+    first place, there's nothing to check permissions against yet.
     """
     try:
         return OrganizationRepository(current_user.db).create_organization(
@@ -94,17 +94,34 @@ def create_organization(
 
 @router.get("/me", response_model=Organization)
 def get_my_organization(current_user: CurrentUser = Depends(get_current_user)) -> Organization:
-    """The authenticated user's organization. 404 if they don't belong
-    to one yet -- the frontend should treat that as "show the create-
-    organization flow", same as profile.py's get_my_profile treats a
-    missing profile as "show the CV upload flow". No permission check
-    beyond org membership itself -- every role can see their own org.
+    """The organization for this request's *active* org context (see
+    CurrentUser.organization_id -- selected via X-Organization-Id, or
+    the caller's oldest membership if that header is absent). 404 if
+    the caller doesn't belong to any org yet -- the frontend should
+    treat that as "show the create-organization flow", same as
+    profile.py's get_my_profile treats a missing profile as "show the
+    CV upload flow". No permission check beyond org membership itself
+    -- every role can see their own org.
     """
     organization_id = _require_org(current_user)
     org = OrganizationRepository(current_user.db).get_organization(organization_id)
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found.")
     return org
+
+
+@router.get("/mine", response_model=list[Organization])
+def list_my_organizations(current_user: CurrentUser = Depends(get_current_user)) -> list[Organization]:
+    """Every organization the caller belongs to (migration 0017,
+    multi-org support) -- for building an org switcher. Distinct from
+    /me, which returns only the single *active* org for this request.
+    Oldest membership first, matching CurrentUser.all_organization_ids'
+    ordering and the no-header default in get_current_user, so the
+    first item here is always the org /me would resolve to by default.
+    """
+    repo = OrganizationRepository(current_user.db)
+    orgs = [repo.get_organization(org_id) for org_id in current_user.all_organization_ids]
+    return [org for org in orgs if org is not None]
 
 
 @router.patch("", response_model=Organization)
@@ -132,16 +149,20 @@ def update_organization(
 
 @router.post("/leave", status_code=status.HTTP_204_NO_CONTENT)
 def leave_organization(current_user: CurrentUser = Depends(get_current_user)) -> None:
-    """Self-service, no particular permission required beyond being a
-    member at all -- this is a member removing themselves, not
-    managing someone else. See leave_organization() in migration 0013
-    for why this needed its own RPC rather than reusing DELETE
-    /organizations/members/{id}: the DELETE RLS policy on
-    organization_members is admin-only, so a plain staff/manager
-    member has no other way to leave at all.
+    """Leaves this request's active org context (X-Organization-Id, or
+    the caller's oldest membership by default -- same resolution as
+    every other endpoint in this router). Self-service, no particular
+    permission required beyond being a member at all -- this is a
+    member removing themselves, not managing someone else. See
+    leave_organization() in migration 0013 for why this needed its
+    own RPC rather than reusing DELETE /organizations/members/{id}
+    (admin-only RLS); migration 0017 made the RPC take
+    p_organization_id explicitly once multi-org made "the caller's
+    one membership row" ambiguous.
     """
+    organization_id = _require_org(current_user)
     try:
-        OrganizationRepository(current_user.db).leave_organization()
+        OrganizationRepository(current_user.db).leave_organization(organization_id)
     except SupabaseError as exc:
         raise _friendly_supabase_error(exc, fallback_status=status.HTTP_409_CONFLICT) from exc
 

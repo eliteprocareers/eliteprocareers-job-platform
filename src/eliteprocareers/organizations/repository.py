@@ -100,7 +100,7 @@ class OrganizationRepository:
             return None
         return Organization.model_validate(rows[0])
 
-    def leave_organization(self) -> UUID:
+    def leave_organization(self, organization_id: UUID) -> UUID:
         """Atomic -- see leave_organization() in migration 0013. Exists
         because the DELETE RLS policy on organization_members only
         permits is_org_admin(), which means a plain member couldn't
@@ -108,10 +108,18 @@ class OrganizationRepository:
         that policy directly, not assumed. Enforces the same
         last-owner orphan guard as the admin-driven remove/demote
         paths. Raises SupabaseError with the function's own message if
-        the caller isn't a member, or is the org's last owner.
+        the caller isn't a member of organization_id, or is that
+        org's last owner.
+
+        organization_id is required as of migration 0017 -- multi-org
+        membership means "the caller's membership row" is no longer
+        unique, so the RPC (and this wrapper) must be told which
+        membership to remove rather than assuming there's only one.
         """
-        organization_id = self.db.rpc("leave_organization", {})
-        return UUID(organization_id)
+        result = self.db.rpc(
+            "leave_organization", {"p_organization_id": str(organization_id)}
+        )
+        return UUID(result)
 
     # ------------------------------------------------------------------
     # Candidate assignments (migration 0015 -- assigned_only sharing)
