@@ -183,9 +183,10 @@ class UpdateApplicationStatusRequest(BaseModel):
 
 
 class CreateOrganizationRequest(BaseModel):
-    """Body for POST /organizations. Rejected server-side (RPC-level,
-    not just here) if the caller already belongs to an org -- see
-    create_organization_with_owner() in migration 0010.
+    """Body for POST /organizations. Creates the caller as owner of a
+    new org -- see create_organization_with_owner() in migration
+    0011. Multi-org membership is allowed as of migration 0017: the
+    caller does not need to be org-less first.
     """
     name: str
     org_type: OrgType = OrgType.individual
