@@ -34,6 +34,7 @@ source rather than assuming one URL-building rule fits every source.
 """
 
 import html
+import logging
 import re
 import time
 
@@ -62,6 +63,8 @@ DESCRIPTION_PATTERN = re.compile(
     re.DOTALL,
 )
 LISTING_URL_PATTERN = re.compile(r'href="(/job/[a-z0-9-]+)"')
+
+logger = logging.getLogger(__name__)
 
 # Fallback for listings with no "View Jobs at {Company}" link (confirmed
 # live 2026-07-19 on "Transport Manager at Karmec Company Ltd" -- link is
@@ -270,9 +273,13 @@ class MyJobMagConnector(JobConnector):
         jobs: list[dict] = []
         extracted_urls: set[str] = set()
 
-        for base_url, page_style in self.LISTING_SOURCES:
+        for source_index, (base_url, page_style) in enumerate(self.LISTING_SOURCES, start=1):
             source_seen: set[str] = set()
             source_max_pages = max_pages if base_url == self.BASE_LISTING_URL else self.CATEGORY_MAX_PAGES
+            logger.info(
+                "MyJobMag source %d/%d: %s (max_pages=%d)",
+                source_index, len(self.LISTING_SOURCES), base_url, source_max_pages,
+            )
 
             for page_num in range(1, source_max_pages + 1):
                 page_url = self._page_url(base_url, page_style, page_num)

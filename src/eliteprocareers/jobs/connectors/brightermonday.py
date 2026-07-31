@@ -44,6 +44,7 @@ request volume bounded now that there are 27 sources instead of 1.
 """
 
 import json
+import logging
 import re
 import time
 
@@ -63,6 +64,8 @@ JSONLD_PATTERN = re.compile(
 LISTING_URL_PATTERN = re.compile(
     r'href="(https://www\.brightermonday\.co\.ke/listings/[a-z0-9-]+)"'
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_ref(graph_index: dict, value):
@@ -276,9 +279,13 @@ class BrighterMondayConnector(JobConnector):
         jobs: list[dict] = []
         extracted_urls: set[str] = set()
 
-        for base_url in self.LISTING_SOURCES:
+        for source_index, base_url in enumerate(self.LISTING_SOURCES, start=1):
             source_seen: set[str] = set()
             source_max_pages = max_pages if base_url == self.BASE_LISTING_URL else self.CATEGORY_MAX_PAGES
+            logger.info(
+                "BrighterMonday source %d/%d: %s (max_pages=%d)",
+                source_index, len(self.LISTING_SOURCES), base_url, source_max_pages,
+            )
 
             for page_num in range(1, source_max_pages + 1):
                 page_url = base_url if page_num == 1 else f"{base_url}?page={page_num}"
