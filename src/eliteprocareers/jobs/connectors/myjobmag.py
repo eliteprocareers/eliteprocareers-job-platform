@@ -186,8 +186,22 @@ class MyJobMagConnector(JobConnector):
         return f"{base_url}/{page_num}"
 
     def extract_from_url(self, url: str) -> dict | None:
-        response = httpx.get(url, timeout=15.0, follow_redirects=True)
-        response.raise_for_status()
+        """Fetch a single MyJobMag job listing page and parse it into a
+        dict shaped to match the `jobs` table columns.
+
+        Returns None on any parsing failure below, OR if the request
+        itself fails (timeout, connection error, non-2xx status) -- added
+        2026-07-30 after this exact call raised httpx.ReadTimeout mid-run
+        against a real MyJobMag job page and crashed the entire ingestion
+        run, losing every job already fetched from all 46 sources crawled
+        before it (nothing is saved until fetch_jobs returns as a whole).
+        One bad page out of hundreds shouldn't cost the whole run.
+        """
+        try:
+            response = httpx.get(url, timeout=15.0, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.HTTPError:
+            return None
         text = response.text
 
         title_match = TITLE_TAG_PATTERN.search(text)
@@ -263,7 +277,10 @@ class MyJobMagConnector(JobConnector):
             for page_num in range(1, source_max_pages + 1):
                 page_url = self._page_url(base_url, page_style, page_num)
                 time.sleep(self.REQUEST_DELAY_SECONDS)
-                response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
+                try:
+                    response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
+                except httpx.HTTPError:
+                    break
                 if response.status_code != 200:
                     break
 

@@ -176,10 +176,20 @@ class BrighterMondayConnector(JobConnector):
         """Fetch a single BrighterMonday job listing page and parse its
         JSON-LD @graph into a dict shaped to match the `jobs` table columns.
 
-        Returns None if no JobPosting JSON-LD block is found on the page.
+        Returns None if no JobPosting JSON-LD block is found on the page,
+        OR if the request itself fails (timeout, connection error, non-2xx
+        status) -- added 2026-07-30 after a real timeout on one MyJobMag
+        job page crashed an entire run mid-crawl, losing every job already
+        fetched (nothing is saved until fetch_jobs returns). One bad page
+        out of hundreds shouldn't cost the whole run; same reasoning
+        applies here even though this specific crash happened on the
+        other connector.
         """
-        response = httpx.get(url, timeout=15.0, follow_redirects=True)
-        response.raise_for_status()
+        try:
+            response = httpx.get(url, timeout=15.0, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.HTTPError:
+            return None
 
         match = JSONLD_PATTERN.search(response.text)
         if not match:
@@ -273,7 +283,14 @@ class BrighterMondayConnector(JobConnector):
             for page_num in range(1, source_max_pages + 1):
                 page_url = base_url if page_num == 1 else f"{base_url}?page={page_num}"
                 time.sleep(self.REQUEST_DELAY_SECONDS)
-                response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
+                try:
+                    response = httpx.get(page_url, timeout=15.0, follow_redirects=True)
+                except httpx.HTTPError:
+                    # Same reasoning as extract_from_url's try/except -- a
+                    # failed listing-page request stops just this source's
+                    # pagination (same as a real end-of-listings), not the
+                    # whole run.
+                    break
                 if response.status_code != 200:
                     break
 
