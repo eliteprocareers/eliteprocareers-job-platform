@@ -47,6 +47,7 @@ import json
 import logging
 import re
 import time
+from typing import Callable
 
 import httpx
 
@@ -248,7 +249,12 @@ class BrighterMondayConnector(JobConnector):
             "raw_json": job_node,
         }
 
-    def fetch_jobs(self, max_pages: int = 5, **kwargs) -> list[dict]:
+    def fetch_jobs(
+        self,
+        max_pages: int = 5,
+        on_source_complete: Callable[[list[dict]], None] | None = None,
+        **kwargs,
+    ) -> list[dict]:
         """Crawl every configured listing source (LISTING_SOURCES) and
         extract each listing found via extract_from_url(). The general
         feed (BASE_LISTING_URL) is capped at max_pages (default 5, still
@@ -275,12 +281,26 @@ class BrighterMondayConnector(JobConnector):
         -- since this now issues meaningfully more requests per run than
         the 2-source version, and there's still no other rate limiting
         anywhere in this codebase.
+
+        on_source_complete, if given, is called once after each source
+        finishes (with just that source's newly extracted jobs) -- added
+        2026-07-31 after a real run lost 100% of a source's crawled jobs
+        when the process was killed mid-crawl (laptop closed), since
+        ingestion_service.py previously only saved anything after this
+        whole method returned. A 27-or-46-source crawl at this depth can
+        run for the better part of an hour; nothing about that should be
+        all-or-nothing. This method still also returns the full
+        accumulated list at the end regardless, so existing callers
+        (the smoke test, anything not passing this callback) keep
+        working exactly as before -- this is additive, not a breaking
+        change to the return contract.
         """
         jobs: list[dict] = []
         extracted_urls: set[str] = set()
 
         for source_index, base_url in enumerate(self.LISTING_SOURCES, start=1):
             source_seen: set[str] = set()
+            source_jobs: list[dict] = []
             source_max_pages = max_pages if base_url == self.BASE_LISTING_URL else self.CATEGORY_MAX_PAGES
             logger.info(
                 "BrighterMonday source %d/%d: %s (max_pages=%d)",
@@ -321,6 +341,10 @@ class BrighterMondayConnector(JobConnector):
                     time.sleep(self.REQUEST_DELAY_SECONDS)
                     job = self.extract_from_url(listing_url)
                     if job is not None:
-                        jobs.append(job)
+                        source_jobs.append(job)
+
+            jobs.extend(source_jobs)
+            if on_source_complete is not None and source_jobs:
+                on_source_complete(source_jobs)
 
         return jobs

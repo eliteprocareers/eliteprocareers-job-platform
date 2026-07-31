@@ -37,6 +37,7 @@ import html
 import logging
 import re
 import time
+from typing import Callable
 
 import httpx
 
@@ -260,21 +261,31 @@ class MyJobMagConnector(JobConnector):
             "raw_json": key_info,
         }
 
-    def fetch_jobs(self, max_pages: int = 5, **kwargs) -> list[dict]:
+    def fetch_jobs(
+        self,
+        max_pages: int = 5,
+        on_source_complete: Callable[[list[dict]], None] | None = None,
+        **kwargs,
+    ) -> list[dict]:
         """Crawl every configured listing source (LISTING_SOURCES). The
         general feed (BASE_LISTING_URL) is capped at max_pages (default
         5, still caller-overridable, unchanged from before this
         expansion); every category source is capped at the smaller,
         fixed CATEGORY_MAX_PAGES instead. Same per-source-pagination-
-        stop / cross-source-dedup / politeness-delay reasoning as
+        stop / cross-source-dedup / politeness-delay / incremental-
+        on_source_complete-callback reasoning as
         BrighterMondayConnector.fetch_jobs -- see that docstring for the
-        full explanation.
+        full explanation, including why on_source_complete exists (a
+        real run lost this connector's entire crawl when the process
+        was killed mid-run, since nothing was saved until this method
+        returned as a whole).
         """
         jobs: list[dict] = []
         extracted_urls: set[str] = set()
 
         for source_index, (base_url, page_style) in enumerate(self.LISTING_SOURCES, start=1):
             source_seen: set[str] = set()
+            source_jobs: list[dict] = []
             source_max_pages = max_pages if base_url == self.BASE_LISTING_URL else self.CATEGORY_MAX_PAGES
             logger.info(
                 "MyJobMag source %d/%d: %s (max_pages=%d)",
@@ -308,6 +319,10 @@ class MyJobMagConnector(JobConnector):
                     time.sleep(self.REQUEST_DELAY_SECONDS)
                     job = self.extract_from_url(listing_url)
                     if job is not None:
-                        jobs.append(job)
+                        source_jobs.append(job)
+
+            jobs.extend(source_jobs)
+            if on_source_complete is not None and source_jobs:
+                on_source_complete(source_jobs)
 
         return jobs

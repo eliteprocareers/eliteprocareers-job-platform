@@ -76,20 +76,53 @@ def run_ingestion(db: SupabaseClient | None = None) -> IngestionSummary:
         result = SourceResult(source=source_name)
 
         existing_ids = job_repo.get_existing_external_ids(source_name)
+        reported_ids: set[str] = set()
+
+        def save_batch(jobs_batch: list[dict]) -> None:
+            # Shared by both the on_source_complete callback (fires
+            # mid-crawl for BrighterMonday/MyJobMag -- see their
+            # fetch_jobs docstrings) and the post-call save below (the
+            # only path Greenhouse/Lever actually use, since they save
+            # once per board/site already). Added 2026-07-31 after a
+            # real run lost an entire source's crawled jobs when the
+            # process was killed mid-crawl, since nothing was saved
+            # until fetch_jobs() returned as a whole.
+            #
+            # reported_ids guards against double-counting result.fetched
+            # -- BrighterMonday/MyJobMag jobs get reported once via the
+            # mid-crawl callback, then appear again in the full list
+            # returned at the end (see the post-call save below); without
+            # this, every one of their jobs would be counted twice.
+            not_yet_reported = [j for j in jobs_batch if j["external_id"] not in reported_ids]
+            reported_ids.update(j["external_id"] for j in not_yet_reported)
+            result.fetched += len(not_yet_reported)
+
+            new_jobs = [j for j in not_yet_reported if j["external_id"] not in existing_ids]
+            existing_ids.update(j["external_id"] for j in new_jobs)
+            saved = job_repo.bulk_create(new_jobs)
+            result.new_saved += len(saved)
 
         for token, company_name in targets.items():
             try:
-                jobs = connector.fetch_jobs(board_token=token, company_name=company_name)
+                jobs = connector.fetch_jobs(
+                    board_token=token,
+                    company_name=company_name,
+                    on_source_complete=save_batch,
+                )
             except Exception as e:
                 result.failed_targets.append(f"{token}: {e}")
                 continue
 
-            result.fetched += len(jobs)
-            new_jobs = [j for j in jobs if j["external_id"] not in existing_ids]
-            existing_ids.update(j["external_id"] for j in new_jobs)
-
-            saved = job_repo.bulk_create(new_jobs)
-            result.new_saved += len(saved)
+            # For BrighterMonday/MyJobMag, every job in this returned
+            # list was already saved AND counted incrementally via the
+            # on_source_complete callback above -- reported_ids and
+            # existing_ids both already contain their external_ids by
+            # this point, so this call correctly becomes a full no-op.
+            # For Greenhouse/Lever, which don't call on_source_complete
+            # at all (see their fetch_jobs docstrings -- they already
+            # save once per board/site via this exact call), this is the
+            # only save that happens, same as before this change.
+            save_batch(jobs)
 
         results.append(result)
 

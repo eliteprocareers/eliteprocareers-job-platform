@@ -39,12 +39,16 @@ class LeverConnector(JobConnector):
         "same pattern as Greenhouse's board_token."
     )
 
-    def fetch_jobs(self, board_token: str, company_name: str) -> list[dict]:
+    def fetch_jobs(self, board_token: str, company_name: str, **kwargs) -> list[dict]:
         """Fetch all published postings for a Lever site name.
 
         Uses `board_token` as the parameter name to match the JobConnector
         call signature the ingestion engine already uses for Greenhouse —
         it holds the Lever "site" value here, e.g. 'netflix'.
+
+        **kwargs absorbs on_source_complete -- see Greenhouse's
+        fetch_jobs docstring for why (same reasoning, same connector
+        shape: ingestion_service.py already saves after every call here).
         """
         url = f"{BASE_URL}/{board_token}"
         response = httpx.get(url, params={"mode": "json"}, timeout=15.0)

@@ -36,11 +36,19 @@ class GreenhouseConnector(JobConnector):
         "caller must supply it alongside the board token."
     )
 
-    def fetch_jobs(self, board_token: str, company_name: str) -> list[dict]:
+    def fetch_jobs(self, board_token: str, company_name: str, **kwargs) -> list[dict]:
         """Fetch all published jobs for a Greenhouse board token.
 
         Returns dicts shaped to match the `jobs` table columns, ready for
         JobRepository.bulk_create() after caller-side dedup filtering.
+
+        **kwargs absorbs on_source_complete (added 2026-07-31 for
+        BrighterMonday/MyJobMag's incremental-save callback) -- this
+        connector already saves incrementally in practice, since
+        ingestion_service.py calls fetch_jobs() once per board and saves
+        after each call returns, so there's nothing for this connector
+        to call the callback with; it just needs to not break when
+        ingestion_service.py passes it uniformly to every connector.
         """
         url = f"{BASE_URL}/{board_token}/jobs"
         response = httpx.get(url, params={"content": "true"}, timeout=15.0)
