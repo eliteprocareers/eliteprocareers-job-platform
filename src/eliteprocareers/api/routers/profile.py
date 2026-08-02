@@ -94,6 +94,7 @@ async def upload_cv(
     background_tasks.add_task(
         parse_cv_upload_tracked,
         current_user.id,
+        current_user.organization_id,
         upload.id,
         file.filename,
         content,
