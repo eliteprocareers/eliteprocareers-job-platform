@@ -93,6 +93,48 @@ def _strip_markdown_fences(raw: str) -> str:
     return text.strip()
 
 
+# Added 2026-08-03 after a real CV upload failed validation entirely:
+# the prompt explicitly instructs "basic|conversational|fluent|native or
+# null" (see build_extraction_prompt above), but Groq still returned
+# "Proficient" and "Native" (capitalized, and "Proficient" isn't even
+# one of the four listed options) for a real candidate's languages --
+# confirmed live, not hypothetical. Prompt instructions alone aren't
+# reliable enough for a strict enum field; this is defense-in-depth
+# normalization run before Pydantic validation, not a replacement for
+# the prompt (which stays as-is -- still gets it right most of the
+# time, this just covers the cases it doesn't).
+_PROFICIENCY_SYNONYMS: dict[str, str] = {
+    "native": "native", "mother tongue": "native", "first language": "native",
+    "fluent": "fluent", "advanced": "fluent", "proficient": "fluent", "excellent": "fluent",
+    "professional working proficiency": "fluent", "full professional proficiency": "fluent",
+    "conversational": "conversational", "intermediate": "conversational",
+    "working proficiency": "conversational", "good": "conversational", "moderate": "conversational",
+    "basic": "basic", "beginner": "basic", "elementary": "basic", "limited": "basic",
+}
+
+
+def _normalize_language_proficiency(data: dict) -> dict:
+    """Maps common freeform proficiency phrasing to the strict
+    LanguageProficiency enum, case-insensitively. Anything not
+    recognized becomes null rather than failing the entire CV parse --
+    proficiency is a minor field; losing it for one language is far
+    better than losing the candidate's whole name/work history/skills
+    to a validation error over a single unrecognized word.
+    """
+    languages = data.get("languages")
+    if not isinstance(languages, list):
+        return data
+    for entry in languages:
+        if not isinstance(entry, dict):
+            continue
+        raw_proficiency = entry.get("proficiency")
+        if not isinstance(raw_proficiency, str):
+            continue
+        normalized = _PROFICIENCY_SYNONYMS.get(raw_proficiency.strip().lower())
+        entry["proficiency"] = normalized  # None if not recognized -- safe default
+    return data
+
+
 def parse_extraction_response(raw: str) -> ParsedCVProfile:
     cleaned = _strip_markdown_fences(raw)
     try:
@@ -101,6 +143,8 @@ def parse_extraction_response(raw: str) -> ParsedCVProfile:
         raise CVParsingError(
             f"LLM response was not valid JSON: {e}\nRaw response:\n{raw}"
         ) from e
+
+    data = _normalize_language_proficiency(data)
 
     try:
         return ParsedCVProfile.model_validate(data)
