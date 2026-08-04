@@ -15,6 +15,8 @@ from eliteprocareers.profiles.models import CVTrack, DocType, FullProfile, Gener
 def build_cover_letter_prompt(
     profile: FullProfile,
     track: CVTrack,
+    job_title: str,
+    job_company: str,
     job_description: str,
     style_sample_text: str | None = None,
 ) -> str:
@@ -56,17 +58,23 @@ CANDIDATE SKILLS: {skills_text}
 CANDIDATE WORK EXPERIENCE:
 {work_text}
 
+JOB TITLE: {job_title}
+COMPANY: {job_company}
+
 JOB DESCRIPTION TO WRITE FOR:
 {job_description}
 {style_instruction}
 
-Write a professional cover letter tailored to this job description, using
-ONLY real information from the candidate's profile above — do not invent
-experience, skills, or credentials that aren't listed. Keep it to 3-4
-paragraphs, no more than about 350 words. Do not include a date, address
-block, or placeholder brackets like "[Hiring Manager's Name]" — start
-directly with the salutation "Dear Hiring Manager," and end with a
-professional sign-off ("Sincerely,").
+Write a professional cover letter tailored to this SPECIFIC job posting,
+using ONLY real information from the candidate's profile above -- do not
+invent experience, skills, or credentials that aren't listed. Reference
+the exact job title ("{job_title}") and the company name ("{job_company}")
+by name at least once each, naturally, in the body -- a generic letter
+that never names the role or employer is not acceptable output here.
+Keep it to 3-4 paragraphs, no more than about 350 words. Do not include
+a date, address block, or placeholder brackets like "[Hiring Manager's
+Name]" -- start directly with the salutation "Dear Hiring Manager,"
+and end with a professional sign-off ("Sincerely,").
 
 Respond with ONLY the cover letter text — no commentary, no markdown
 formatting, no code fences."""
@@ -75,6 +83,8 @@ formatting, no code fences."""
 def generate_cover_letter(
     profile: FullProfile,
     track: CVTrack,
+    job_title: str,
+    job_company: str,
     job_description: str,
     doc_repo: DocumentRepository,
     job_id=None,
@@ -84,11 +94,24 @@ def generate_cover_letter(
     """Full pipeline: build prompt -> call LLM -> save as a new
     generated_documents version. Returns the saved GeneratedDocument.
 
+    job_title/job_company (added 2026-08-04): confirmed live that the
+    call site already has the full `job` row in hand (job.title,
+    job.company) but was only ever forwarding job.description here --
+    every generated cover letter was structurally incapable of naming
+    the employer or the exact role, even when the job description
+    itself was rich and specific (confirmed against a real posting --
+    "Nurse" at "Ruben Centre" -- whose description never mentions the
+    company name in its own body text, so the LLM genuinely had no way
+    to know it). Not a prompt-wording problem; the data just wasn't
+    there to reference.
+
     style_sample_text is optional and, when present, is used only to
     influence tone/voice in the prompt (see build_cover_letter_prompt) --
     it is never itself persisted as part of the generated document.
     """
-    prompt = build_cover_letter_prompt(profile, track, job_description, style_sample_text)
+    prompt = build_cover_letter_prompt(
+        profile, track, job_title, job_company, job_description, style_sample_text
+    )
     raw_response = generate_text(prompt, temperature=0.7)
     content = raw_response.strip()
 

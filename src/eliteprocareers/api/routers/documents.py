@@ -128,6 +128,8 @@ def generate_cover_letter_for_job(
     document = generate_cover_letter(
         profile=profile,
         track=track,
+        job_title=job.title,
+        job_company=job.company,
         job_description=job.description or "",
         doc_repo=doc_repo,
         job_id=job_id,

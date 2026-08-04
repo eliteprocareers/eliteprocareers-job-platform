@@ -106,6 +106,8 @@ def maybe_auto_apply(
         cover_letter_doc = generate_cover_letter(
             profile=full_profile,
             track=track,
+            job_title=job.title,
+            job_company=job.company,
             job_description=job.description or "",
             doc_repo=doc_repo,
             job_id=job.id,
