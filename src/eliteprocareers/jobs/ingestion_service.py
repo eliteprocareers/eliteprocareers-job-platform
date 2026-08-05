@@ -7,14 +7,79 @@ or an API endpoint.
 
 Uses the service_role key (bypasses RLS) — ingestion is a backend
 operation, not a per-user action.
+Populates jobs.attributes (industry/employment_type/seniority/etc.) at
+save time for sources with an extraction function -- added 2026-08-05
+(v40) after discovering extract_myjobmag_attributes() and
+extract_brightermonday_attributes() existed but had never been wired
+into this path; their only callers were one-off backfill scripts run
+once against a much smaller corpus (see scripts/backfill_*_attributes.py
+and v40 handover for the full incident). Without this, every job
+ingested through this service permanently had attributes.industry
+unset, silently disabling the industry filter/penalty in
+matching/filtering.py and scoring/embeddings.py for that job.
 """
+import logging
 from dataclasses import dataclass, field
 
 from eliteprocareers.db.client import SupabaseClient
+from eliteprocareers.jobs.attribute_extraction import (
+    extract_brightermonday_attributes,
+    extract_myjobmag_attributes,
+)
 from eliteprocareers.jobs.connectors import registry
 from eliteprocareers.jobs.known_boards import GREENHOUSE_BOARDS
 from eliteprocareers.jobs.known_lever_sites import LEVER_SITES
 from eliteprocareers.jobs.repository import JobRepository
+
+logger = logging.getLogger(__name__)
+
+# Per-source raw_json -> attributes extractors. Greenhouse/Lever have no
+# entry here deliberately -- neither source's raw_json carries anything
+# resembling an industry/job-field category (confirmed by inspecting
+# their connector code and live raw_json), so there's nothing to
+# extract yet, not a gap to silently paper over. Add an entry here (and
+# a matching extract_*_attributes()) if that ever changes.
+ATTRIBUTE_EXTRACTORS = {
+    "myjobmag": extract_myjobmag_attributes,
+    "brightermonday": extract_brightermonday_attributes,
+}
+
+
+def _apply_attribute_extraction(source_name: str, jobs_batch: list[dict]) -> None:
+    """Mutates each job dict in place, adding an "attributes" key when
+    an extractor exists for this source. Never raises -- a single job's
+    malformed raw_json must not take down the rest of the batch's save
+    (same failure-isolation principle as JobRepository.bulk_create's
+    row-by-row fallback).
+    """
+    extractor = ATTRIBUTE_EXTRACTORS.get(source_name)
+    if extractor is None:
+        return
+
+    all_unmapped: set[str] = set()
+    for job in jobs_batch:
+        try:
+            attributes, unmapped = extractor(job.get("raw_json") or {})
+            job["attributes"] = attributes
+            all_unmapped.update(unmapped)
+        except Exception:
+            logger.warning(
+                "attribute extraction failed for %s job external_id=%s -- "
+                "saving with attributes={}",
+                source_name,
+                job.get("external_id"),
+                exc_info=True,
+            )
+            job["attributes"] = {}
+
+    if all_unmapped:
+        logger.info(
+            "%s: %d unmapped category value(s) this batch, needs adding "
+            "to the taxonomy map: %s",
+            source_name,
+            len(all_unmapped),
+            sorted(all_unmapped),
+        )
 
 # Per-source board/company lists a connector needs to know what to poll.
 # Each connector with scheduled_polling=True gets its own entry here as
@@ -99,6 +164,7 @@ def run_ingestion(db: SupabaseClient | None = None) -> IngestionSummary:
 
             new_jobs = [j for j in not_yet_reported if j["external_id"] not in existing_ids]
             existing_ids.update(j["external_id"] for j in new_jobs)
+            _apply_attribute_extraction(source_name, new_jobs)
             saved = job_repo.bulk_create(new_jobs)
             result.new_saved += len(saved)
 

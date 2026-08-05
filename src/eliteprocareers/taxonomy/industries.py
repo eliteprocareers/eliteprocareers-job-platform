@@ -106,6 +106,19 @@ SOURCE_BRIGHTERMONDAY_INDUSTRY_MAP: dict[str, str | list[str] | None] = {
     "Shipping & Logistics": "Logistics & Transport",
     "Tourism & Travel": "Tourism & Travel",
     "Unspecified": None,  # explicit sentinel, not a real value -- excluded, not unmapped
+    # Added 2026-08-05 (v40) -- discovered live against the full 1,009-job
+    # BrighterMonday corpus (grown from 80 jobs since this table was last
+    # confirmed 2026-07-19). These 5 values had zero occurrences in the
+    # original sample and were silently landing every job that carried
+    # them in `unmapped`, i.e. attributes["industry"] never got set for
+    # them. Mappings below are a reasonable first pass, NOT independently
+    # confirmed the way the original 16 were -- flag for review like
+    # _INDUSTRY_MISMATCH_PENALTY's 0.3 multiplier.
+    "NGO, NPO & Charity": "NGO & Nonprofit",
+    "Automotive & Aviation": ["Automotive", "Engineering & Technology"],
+    "Enforcement & Security": "Security & Safety",
+    "Law & Compliance": "Legal",
+    "Government": "Government & Public Sector",
 }
 
 # --- BrighterMonday: schema.org JobPosting.occupationalCategory -> canonical ---
@@ -133,6 +146,16 @@ SOURCE_BRIGHTERMONDAY_OCCUPATIONAL_CATEGORY_MAP: dict[str, str | list[str] | Non
     "Supply Chain & Procurement": "Supply Chain & Procurement",
     "Trades & Services": "Trades & Services",
     "Unspecified": None,
+    # Added 2026-08-05 (v40) -- same staleness issue as
+    # SOURCE_BRIGHTERMONDAY_INDUSTRY_MAP above, confirmed live against the
+    # same grown corpus. Same caveat: reasonable first pass, not yet
+    # independently confirmed.
+    "Research, Teaching & Training": ["Education", "Science & Research"],
+    "Food Services & Catering": "Hospitality",
+    "Building & Architecture": ["Construction", "Creative & Design"],
+    "Estate Agents & Property Management": "Real Estate",
+    "Consulting & Strategy": "Management & Business Development",
+    "Community & Social Services": "NGO & Nonprofit",
 }
 
 # --- MyJobMag: raw_json["Job Field"] (post-split, see attribute_extraction
@@ -187,6 +210,27 @@ SOURCE_MYJOBMAG_JOB_FIELD_MAP: dict[str, str | list[str] | None] = {
     "NGO/Non-Profit": "NGO & Nonprofit",
     "UX, Design and Architecture": "Creative & Design",
     "Sports, Fitness and Personal Care": "Health, Wellness & Fitness",
+    # Added 2026-08-05 (v40) -- discovered live against the full
+    # 2,363-job MyJobMag corpus (grown from 246 jobs since this table
+    # was last confirmed 2026-07-19/20; the 45-category expansion this
+    # covers happened 2026-07-30, after the last confirmation date).
+    # Same caveat as the two BrighterMonday additions above: reasonable
+    # first pass, not yet independently confirmed. "Caregiver / Nanny /
+    # Social Workers" is deliberately NOT mapped to "Healthcare" --
+    # domestic/personal care is a different category from clinical
+    # nursing, and conflating them would reintroduce exactly the kind
+    # of false positive this session's investigation was chasing.
+    "Construction and Site Engineering": ["Construction", "Engineering & Technology"],
+    "Real Estate": "Real Estate",
+    "Risk Management and Compliance": ["Legal", "Accounting & Finance"],
+    "Research and Development": "Science & Research",
+    "Oil and Gas, Energy and Mining": ["Oil & Gas", "Energy & Utilities"],
+    "Travels and Tours": "Tourism & Travel",
+    "Strategic and Top Management": "Management & Business Development",
+    "Bursary and Scholarships": "Education",
+    "Caregiver / Nanny / Social Workers": "Health, Wellness & Fitness",
+    "Volunteer": None,  # program type, not an industry -- same treatment as Internships
+    "RFP / RFQ / EOI": "Supply Chain & Procurement",
 }
 
 # --- CVTrack.track_name -> canonical categories ---
