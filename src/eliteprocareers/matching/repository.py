@@ -262,6 +262,21 @@ class MatchingRunRepository:
             return None
         return MatchingRun.model_validate(rows[0])
 
+    # A "running" row older than this is treated as dead, not in-flight.
+    # Added 2026-08-06 after finding 10 matching_runs rows stuck at
+    # 'running' in production, some over a week old -- confirmed via
+    # Vercel:get_runtime_errors as "Application exited with code 143
+    # (SIGTERM)" (function-duration kills mid-run), most recently
+    # 2026-08-05. A SIGTERM'd process never reaches run_matching_for_
+    # track_tracked's except block, so mark_failed() is never called --
+    # the row is orphaned permanently and get_running_run_for_track's
+    # 409-conflict check then blocks every future retry forever, with
+    # no way to recover short of manual SQL. STALE_RUN_SECONDS is set
+    # well above the function's maxDuration (800s, see vercel.json) so
+    # a genuinely still-running call is never reaped out from under
+    # itself -- 1200s gives ~7 minutes of margin over the cap.
+    STALE_RUN_SECONDS = 1200
+
     def get_running_run_for_track(self, cv_track_id):
         """Any matching_runs row still in-flight (status='running') for
         this track. Used by trigger_matching to refuse starting a second
@@ -271,6 +286,13 @@ class MatchingRunRepository:
         uq_applications_track_job (migration 0010) caught it at the DB
         level. This closes the root cause the constraint only patches
         around.
+
+        If the most recent 'running' row is older than STALE_RUN_SECONDS,
+        it's reaped here: marked 'failed' with an explanatory message and
+        treated as not-running (returns None), so the caller can start a
+        fresh run instead of being blocked by a run that Vercel's
+        platform already silently killed. See STALE_RUN_SECONDS docstring
+        for why this is safe against a genuinely in-flight run.
         """
         rows = self.db.select(
             self.TABLE,
@@ -284,4 +306,29 @@ class MatchingRunRepository:
         )
         if not rows:
             return None
-        return MatchingRun.model_validate(rows[0])
+        run = MatchingRun.model_validate(rows[0])
+
+        # started_at is `not null default now()` in the schema (migration
+        # 0004) so this should always be set for a real row -- None is
+        # only reachable if a row were ever inserted bypassing the DB
+        # default entirely, which nothing in this codebase does. Treat
+        # that as not-stale rather than crash on the subtraction below.
+        if run.started_at is None:
+            return run
+
+        age_seconds = (
+            datetime.now(timezone.utc) - run.started_at
+        ).total_seconds()
+        if age_seconds > self.STALE_RUN_SECONDS:
+            self.mark_failed(
+                run.id,
+                (
+                    f"Auto-reaped as stale after {int(age_seconds)}s with no "
+                    f"completion (last progress: {run.jobs_processed}/"
+                    f"{run.jobs_total} jobs) -- almost certainly a Vercel "
+                    "function-duration kill (SIGTERM) mid-run, not a real "
+                    "in-progress run."
+                ),
+            )
+            return None
+        return run

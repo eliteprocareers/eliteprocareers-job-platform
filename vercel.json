@@ -1,4 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "fluid": true
+  "fluid": true,
+  "functions": {
+    "src/eliteprocareers/api/main.py": {
+      "maxDuration": 800
+    }
+  }
 }
