@@ -272,9 +272,10 @@ class MatchingRunRepository:
     # the row is orphaned permanently and get_running_run_for_track's
     # 409-conflict check then blocks every future retry forever, with
     # no way to recover short of manual SQL. STALE_RUN_SECONDS is set
-    # well above the function's maxDuration (800s, see vercel.json) so
-    # a genuinely still-running call is never reaped out from under
-    # itself -- 1200s gives ~7 minutes of margin over the cap.
+    # well above the function's maxDuration (300s as of v42, see
+    # vercel.json -- 800s was rejected by the actual plan; see v42
+    # handover and docs/resumable-matching-design.md) so a genuinely
+    # still-running call is never reaped out from under itself.
     STALE_RUN_SECONDS = 1200
 
     def get_running_run_for_track(self, cv_track_id):
