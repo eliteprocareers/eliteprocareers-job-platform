@@ -3,7 +3,7 @@
   "fluid": true,
   "functions": {
     "src/eliteprocareers/api/main.py": {
-      "maxDuration": 800
+      "maxDuration": 300
     }
   }
 }
